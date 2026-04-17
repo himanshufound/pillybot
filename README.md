@@ -1,0 +1,103 @@
+# Pillybot Frontend
+
+Pillybot is a React 18 + Vite frontend backed by Supabase for auth, storage, database access, and Edge Functions.
+
+## Stack
+
+- React 18
+- Vite
+- Tailwind CSS v4
+- Supabase
+- Vercel
+
+## Pages
+
+- `/auth`
+- `/`
+- `/add`
+- `/verify`
+- `/parse`
+- `/alerts`
+- `/caregiver`
+- `/settings`
+
+## Local setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Create a local env file from the example:
+
+```bash
+cp .env.example .env.local
+```
+
+3. Fill in:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_VAPID_PUBLIC_KEY`
+
+4. Start the app:
+
+```bash
+npm run dev
+```
+
+## Build
+
+```bash
+npm run build
+```
+
+## Supabase
+
+### Migrations
+
+- `supabase/migrations/001_initial_schema.sql`
+- `supabase/migrations/002_storage.sql`
+- `supabase/migrations/004_schema_alignment.sql`
+
+### Edge Functions
+
+- `verify-pill`
+- `send-reminder`
+
+### Required Supabase secrets
+
+Set these in Supabase for the Edge Functions that need them:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `CRON_SECRET`
+- `VAPID_PUBLIC_KEY`
+- `VAPID_PRIVATE_KEY`
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL` (optional)
+
+## Vercel
+
+Add these project environment variables in Vercel:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_VAPID_PUBLIC_KEY`
+
+`vercel.json` is already configured with SPA rewrites and security headers.
+
+## GitHub push
+
+If GitHub CLI is not authenticated yet:
+
+```bash
+gh auth login -h github.com -p https -w
+```
+
+After login:
+
+```bash
+git push -u origin main
+```
