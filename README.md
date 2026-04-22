@@ -64,7 +64,9 @@ npm run build
 ### Edge Functions
 
 - `verify-pill`
+- `parse-prescription`
 - `send-reminder`
+- `static-site`
 
 ### Required Supabase secrets
 
@@ -77,6 +79,12 @@ Set these in Supabase for the Edge Functions that need them:
 - `VAPID_PRIVATE_KEY`
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_MODEL` (optional)
+
+### Storage
+
+- `site` (public web app assets)
+- `pill-images`
+- `prescription-temp`
 
 ## Vercel
 

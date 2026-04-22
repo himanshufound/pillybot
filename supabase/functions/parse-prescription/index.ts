@@ -1,60 +1,53 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.8";
 
-type VerifyPillRequest = {
+type ParsePrescriptionRequest = {
   imagePath: string;
-  medicationId: string;
-  doseLogId?: string;
 };
 
-type VerificationResult = {
-  verified: boolean;
+type ParsedPrescriptionResult = {
+  medication_name: string | null;
+  dosage: string | null;
+  frequency: string | null;
+  times: string[];
+  instructions: string | null;
   confidence: number;
-  description: string;
-  concerns: string[];
-  safe_to_take: boolean;
-  message: string;
 };
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const PILL_IMAGES_BUCKET = "pill-images";
+const PRESCRIPTION_TEMP_BUCKET = "prescription-temp";
 const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-3-5-sonnet-latest";
 
 function jsonResponse(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+    },
   });
 }
 
 function getBearerToken(request: Request): string | null {
   const authorization = request.headers.get("Authorization");
-  if (!authorization) return null;
+  if (!authorization) {
+    return null;
+  }
 
   const [scheme, token, ...rest] = authorization.trim().split(/\s+/);
-  if (scheme !== "Bearer" || !token || rest.length > 0) return null;
+  if (scheme !== "Bearer" || !token || rest.length > 0) {
+    return null;
+  }
 
   return token;
 }
 
-function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function isValidRequestBody(body: unknown): body is VerifyPillRequest {
-  if (!body || typeof body !== "object") return false;
-
-  const candidate = body as Record<string, unknown>;
-  if (typeof candidate.imagePath !== "string" || candidate.imagePath.trim().length === 0) return false;
-  if (typeof candidate.medicationId !== "string" || !isUuid(candidate.medicationId)) return false;
-
-  if (
-    candidate.doseLogId !== undefined &&
-    (typeof candidate.doseLogId !== "string" || !isUuid(candidate.doseLogId))
-  ) {
+function isValidRequestBody(body: unknown): body is ParsePrescriptionRequest {
+  if (!body || typeof body !== "object") {
     return false;
   }
 
-  return true;
+  const candidate = body as Record<string, unknown>;
+  return typeof candidate.imagePath === "string" && candidate.imagePath.trim().length > 0 &&
+    !candidate.imagePath.includes("\0");
 }
 
 function decodePathSafely(rawPath: string): string | null {
@@ -63,7 +56,10 @@ function decodePathSafely(rawPath: string): string | null {
   for (let i = 0; i < 3; i += 1) {
     try {
       const next = decodeURIComponent(decoded);
-      if (next === decoded) return decoded;
+      if (next === decoded) {
+        return decoded;
+      }
+
       decoded = next;
     } catch {
       return null;
@@ -75,50 +71,44 @@ function decodePathSafely(rawPath: string): string | null {
 
 function normalizeStoragePath(rawPath: string): string | null {
   const decoded = decodePathSafely(rawPath);
-  if (!decoded) return null;
+  if (!decoded) {
+    return null;
+  }
+
+  if (decoded.includes("\\") || decoded.includes("\0") || decoded.startsWith("/") || decoded.endsWith("/")) {
+    return null;
+  }
+
+  const collapsed = decoded.trim().replace(/\/+/g, "/");
+  const segments = collapsed.split("/");
 
   if (
-    decoded.includes("\\") ||
-    decoded.includes("\0") ||
-    decoded.includes("%2e") ||
-    decoded.includes("%2E")
+    segments.length < 4 ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     return null;
   }
-
-  const trimmed = decoded.trim();
-  if (trimmed.length === 0 || trimmed.startsWith("/") || trimmed.endsWith("/")) {
-    return null;
-  }
-
-  const collapsed = trimmed.replace(/\/+/g, "/");
-  const segments = collapsed.split("/");
-  if (segments.length < 3) return null;
-  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) return null;
 
   return segments.join("/");
 }
 
 function isAuthorizedImagePath(path: string, userId: string): boolean {
   const segments = path.split("/");
-  return segments[0] === "users" && segments[1] === userId && segments[2] === "pills" && segments.length >= 4;
+  return segments[0] === "users" && segments[1] === userId && segments[2] === "prescriptions" && segments.length >= 4;
 }
 
 function splitParentPath(path: string): { folder: string; fileName: string } {
   const segments = path.split("/");
-  return {
-    folder: segments.slice(0, -1).join("/"),
-    fileName: segments[segments.length - 1],
-  };
-}
-
-function getObjectSizeBytes(metadata: Record<string, unknown> | null | undefined): number | null {
-  const parsed = Number(metadata?.size);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  const fileName = segments[segments.length - 1];
+  const folder = segments.slice(0, -1).join("/");
+  return { folder, fileName };
 }
 
 function getAllowedMimeType(bytes: Uint8Array): "image/jpeg" | "image/png" | null {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+
   if (
     bytes.length >= 8 &&
     bytes[0] === 0x89 &&
@@ -141,7 +131,8 @@ function toBase64(bytes: Uint8Array): string {
   const chunkSize = 0x8000;
 
   for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
   }
 
   return btoa(binary);
@@ -149,59 +140,66 @@ function toBase64(bytes: Uint8Array): string {
 
 function extractModelText(modelResponse: Record<string, unknown>): string | null {
   const content = modelResponse.content;
-  if (!Array.isArray(content) || content.length === 0) return null;
+  if (!Array.isArray(content) || content.length === 0) {
+    return null;
+  }
 
   for (const part of content) {
-    if (!part || typeof part !== "object") continue;
+    if (!part || typeof part !== "object") {
+      continue;
+    }
 
     const candidate = part as Record<string, unknown>;
-    if (candidate.type !== "text") continue;
+    if (candidate.type !== "text") {
+      continue;
+    }
 
     const text = candidate.text;
-    if (typeof text === "string" && text.trim().length > 0) return text;
+    if (typeof text === "string" && text.trim().length > 0) {
+      return text;
+    }
   }
 
   return null;
 }
 
-function parseModelResponse(text: string): VerificationResult {
+function parseModelResponse(text: string): ParsedPrescriptionResult {
   const normalized = text.trim()
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "");
 
   const parsed = JSON.parse(normalized) as Record<string, unknown>;
-  if (
-    typeof parsed.verified !== "boolean" ||
-    typeof parsed.confidence !== "number" ||
-    typeof parsed.description !== "string" ||
-    !Array.isArray(parsed.concerns) ||
-    !parsed.concerns.every((value) => typeof value === "string") ||
-    typeof parsed.safe_to_take !== "boolean" ||
-    typeof parsed.message !== "string"
-  ) {
-    throw new Error("Model response did not match the expected schema");
-  }
+  const confidence = Number(parsed.confidence);
 
-  if (!Number.isFinite(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 1) {
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
     throw new Error("Confidence must be between 0 and 1");
   }
 
+  const normalizeText = (value: unknown): string | null => {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  const times = Array.isArray(parsed.times)
+    ? parsed.times.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
+
   return {
-    verified: parsed.verified,
-    confidence: parsed.confidence,
-    description: parsed.description,
-    concerns: parsed.concerns as string[],
-    safe_to_take: parsed.safe_to_take,
-    message: parsed.message,
+    medication_name: normalizeText(parsed.medication_name),
+    dosage: normalizeText(parsed.dosage),
+    frequency: normalizeText(parsed.frequency),
+    times: times.map((time) => time.trim()),
+    instructions: normalizeText(parsed.instructions),
+    confidence,
   };
 }
 
 Deno.serve(async (request) => {
-  if (request.method === "OPTIONS") {
-    return new Response("ok");
-  }
-
   if (request.method !== "POST") {
     return jsonResponse(405, { error: "Method not allowed" });
   }
@@ -211,7 +209,7 @@ Deno.serve(async (request) => {
   const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
 
   if (!supabaseUrl || !serviceRoleKey || !anthropicApiKey) {
-    return jsonResponse(500, { error: "Server is missing required configuration" });
+    return jsonResponse(500, { error: "Server configuration is incomplete" });
   }
 
   const token = getBearerToken(request);
@@ -220,7 +218,10 @@ Deno.serve(async (request) => {
   }
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
   });
 
   const {
@@ -240,7 +241,7 @@ Deno.serve(async (request) => {
   }
 
   if (!isValidRequestBody(body)) {
-    return jsonResponse(400, { error: "Body must include imagePath and medicationId, with optional doseLogId" });
+    return jsonResponse(400, { error: "Body must include imagePath" });
   }
 
   const normalizedImagePath = normalizeStoragePath(body.imagePath);
@@ -248,45 +249,13 @@ Deno.serve(async (request) => {
     return jsonResponse(403, { error: "imagePath is outside the caller's allowed storage path" });
   }
 
-  const { medicationId, doseLogId } = body;
-
-  const { data: medication, error: medicationError } = await adminClient
-    .from("medications")
-    .select("id, name, dosage, instructions, schedule")
-    .eq("id", medicationId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (medicationError) {
-    return jsonResponse(500, { error: "Failed to load medication" });
-  }
-
-  if (!medication) {
-    return jsonResponse(404, { error: "Medication not found" });
-  }
-
-  if (doseLogId) {
-    const { data: doseLog, error: doseLogError } = await adminClient
-      .from("dose_logs")
-      .select("id")
-      .eq("id", doseLogId)
-      .eq("user_id", user.id)
-      .eq("medication_id", medicationId)
-      .maybeSingle();
-
-    if (doseLogError) {
-      return jsonResponse(500, { error: "Failed to load dose log" });
-    }
-
-    if (!doseLog) {
-      return jsonResponse(403, { error: "Dose log does not belong to this user and medication" });
-    }
-  }
-
   const { folder, fileName } = splitParentPath(normalizedImagePath);
   const { data: listedObjects, error: listError } = await adminClient.storage
-    .from(PILL_IMAGES_BUCKET)
-    .list(folder, { limit: 100, search: fileName });
+    .from(PRESCRIPTION_TEMP_BUCKET)
+    .list(folder, {
+      limit: 100,
+      search: fileName,
+    });
 
   if (listError) {
     return jsonResponse(500, { error: "Failed to inspect image metadata" });
@@ -297,8 +266,8 @@ Deno.serve(async (request) => {
     return jsonResponse(404, { error: "Image not found" });
   }
 
-  const objectSize = getObjectSizeBytes(objectRow.metadata as Record<string, unknown> | null | undefined);
-  if (!objectSize) {
+  const objectSize = Number((objectRow.metadata as Record<string, unknown> | undefined)?.size);
+  if (!Number.isFinite(objectSize) || objectSize <= 0) {
     return jsonResponse(400, { error: "Image metadata is invalid" });
   }
 
@@ -307,7 +276,7 @@ Deno.serve(async (request) => {
   }
 
   const { data: imageBlob, error: downloadError } = await adminClient.storage
-    .from(PILL_IMAGES_BUCKET)
+    .from(PRESCRIPTION_TEMP_BUCKET)
     .download(normalizedImagePath);
 
   if (downloadError || !imageBlob) {
@@ -346,17 +315,17 @@ Deno.serve(async (request) => {
           {
             type: "text",
             text:
-              "You are verifying whether an uploaded pill image matches the user's medication. Respond with JSON only using this exact schema: " +
-              '{"verified":boolean,"confidence":number,"description":string,"concerns":string[],"safe_to_take":boolean,"message":string}.' +
-              ` Medication name: ${medication.name}.` +
-              ` Dosage: ${medication.dosage}.` +
-              ` Instructions: ${medication.instructions ?? "N/A"}.` +
-              ` Schedule: ${medication.schedule ?? "N/A"}.` +
-              " Use a confidence between 0 and 1. Do not include markdown fences or extra keys.",
+              "Extract structured data from this prescription image and respond with JSON only using this exact schema: " +
+              '{"medication_name":string|null,"dosage":string|null,"frequency":string|null,"times":string[],"instructions":string|null,"confidence":number}.' +
+              " If a value is not visible, return null or an empty array. Keep times as human-readable strings.",
           },
           {
             type: "image",
-            source: { type: "base64", media_type: mimeType, data: imageBase64 },
+            source: {
+              type: "base64",
+              media_type: mimeType,
+              data: imageBase64,
+            },
           },
         ],
       },
@@ -391,28 +360,23 @@ Deno.serve(async (request) => {
 
   const completionText = extractModelText(anthropicResponseJson);
   if (!completionText) {
-    return jsonResponse(502, { error: "Anthropic response did not include a verification result" });
+    return jsonResponse(502, { error: "Anthropic response did not include a parsing result" });
   }
 
-  let verificationResult: VerificationResult;
+  let parsedPrescription: ParsedPrescriptionResult;
   try {
-    verificationResult = parseModelResponse(completionText);
+    parsedPrescription = parseModelResponse(completionText);
   } catch {
-    return jsonResponse(502, { error: "Failed to validate model verification JSON" });
+    return jsonResponse(502, { error: "Failed to validate model parsing JSON" });
   }
 
-  if (doseLogId) {
-    const { error: updateError } = await adminClient
-      .from("dose_logs")
-      .update({ verification_result: verificationResult })
-      .eq("id", doseLogId)
-      .eq("user_id", user.id)
-      .eq("medication_id", medicationId);
+  const { error: deleteError } = await adminClient.storage
+    .from(PRESCRIPTION_TEMP_BUCKET)
+    .remove([normalizedImagePath]);
 
-    if (updateError) {
-      return jsonResponse(500, { error: "Failed to update dose log verification result" });
-    }
+  if (deleteError) {
+    console.error("Failed to remove temporary prescription image", deleteError);
   }
 
-  return jsonResponse(200, { verificationResult });
+  return jsonResponse(200, parsedPrescription);
 });
