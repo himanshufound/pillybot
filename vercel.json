@@ -1,17 +1,13 @@
 {
   "rewrites": [
     {
-      "source": "/assets/(.*)",
-      "destination": "/assets/$1"
-    },
-    {
-      "source": "/(.*)",
+      "source": "/:path((?!assets|_next/static).*)",
       "destination": "/index.html"
     }
   ],
   "headers": [
     {
-      "source": "/assets/.*",
+      "source": "/assets/(.*)",
       "headers": [
         {
           "key": "Cache-Control",
