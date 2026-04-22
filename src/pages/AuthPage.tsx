@@ -13,7 +13,7 @@ type AuthMode = "login" | "signup";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function AuthPage() {
-  const { loading: authLoading, user } = useAuth();
+  const { loading: authLoading, user, configError } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -177,6 +177,7 @@ export default function AuthPage() {
             </div>
 
             {error ? <Notice type="error">{error}</Notice> : null}
+            {configError ? <Notice type="error">{configError}</Notice> : null}
             {message ? <Notice type="success">{message}</Notice> : null}
 
             <Input
@@ -197,13 +198,13 @@ export default function AuthPage() {
               value={password}
             />
 
-            <Button disabled={loading !== null} type="submit">
+            <Button disabled={loading !== null || !!configError} type="submit">
               {mode === "login"
                 ? loading === "password" ? "Signing in..." : "Sign in"
                 : loading === "signup" ? "Creating account..." : "Create account"}
             </Button>
             {mode === "login" ? (
-              <Button disabled={loading !== null} onClick={handleMagicLink} type="button" variant="secondary">
+               <Button disabled={loading !== null || !!configError} onClick={handleMagicLink} type="button" variant="secondary">
                 {loading === "magic" ? "Sending..." : "Send magic link"}
               </Button>
             ) : null}

@@ -1,12 +1,13 @@
 import type { Session, User } from "@supabase/supabase-js";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useState } from "react";
-import { supabase } from "./supabase";
+import { getSupabaseConfigError, supabase } from "./supabase";
 
 type AuthContextValue = {
   session: Session | null;
   user: User | null;
   loading: boolean;
+  configError: string | null;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -14,8 +15,16 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const configError = getSupabaseConfigError();
 
   useEffect(() => {
+    // SECURITY: review this
+    // Prevent auth initialization when runtime config is missing; do not attempt unauthenticated fallbacks.
+    if (configError) {
+      setLoading(false);
+      return;
+    }
+
     let mounted = true;
 
     supabase.auth.getSession().then(({ data }) => {
@@ -38,11 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return (
-    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, configError }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
