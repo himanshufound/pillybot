@@ -75,8 +75,8 @@ Set these in Supabase for the Edge Functions that need them:
 - `CRON_SECRET`
 - `VAPID_PUBLIC_KEY`
 - `VAPID_PRIVATE_KEY`
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL` (optional)
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_MODEL` (optional)
 
 ## Vercel
 

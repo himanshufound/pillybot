@@ -24,7 +24,7 @@ const corsHeaders = {
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const PILL_IMAGES_BUCKET = "pill-images";
-const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-2.0-flash";
+const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-2";
 
 function jsonResponse(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
@@ -186,8 +186,8 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function extractCandidateText(geminiResponse: Record<string, unknown>): string | null {
-  const candidates = geminiResponse.candidates;
+function extractModelText(modelResponse: Record<string, unknown>): string | null {
+  const candidates = (modelResponse as any).candidates;
   if (!Array.isArray(candidates) || candidates.length === 0) {
     return null;
   }
@@ -221,7 +221,7 @@ function extractCandidateText(geminiResponse: Record<string, unknown>): string |
   return null;
 }
 
-function parseGeminiResponse(text: string): VerificationResult {
+function parseModelResponse(text: string): VerificationResult {
   const normalized = text.trim()
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
@@ -238,11 +238,11 @@ function parseGeminiResponse(text: string): VerificationResult {
     typeof parsed.safe_to_take !== "boolean" ||
     typeof parsed.message !== "string"
   ) {
-    throw new Error("Gemini response did not match the expected schema");
+    throw new Error("Model response did not match the expected schema");
   }
 
   if (!Number.isFinite(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 1) {
-    throw new Error("Gemini confidence must be between 0 and 1");
+    throw new Error("Confidence must be between 0 and 1");
   }
 
   return {
@@ -266,9 +266,9 @@ serve(async (request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
+  const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
 
-  if (!supabaseUrl || !serviceRoleKey || !geminiApiKey) {
+  if (!supabaseUrl || !serviceRoleKey || !anthropicApiKey) {
     return jsonResponse(500, { error: "Server is missing required configuration" });
   }
 
@@ -410,74 +410,71 @@ serve(async (request) => {
 
   const imageBase64 = toBase64(imageBytes);
 
-  const geminiPayload = {
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            text:
-              "You are verifying whether an uploaded pill image matches the user's medication. " +
-              "Respond with JSON only using this exact schema: " +
-              '{"verified":boolean,"confidence":number,"description":string,"concerns":string[],"safe_to_take":boolean,"message":string}.' +
-              ` Medication name: ${medication.name}.` +
-              ` Dosage: ${medication.dosage}.` +
-              ` Instructions: ${medication.instructions ?? "N/A"}.` +
-              ` Schedule: ${medication.schedule ?? "N/A"}.` +
-              " Use a confidence between 0 and 1. Do not include markdown fences or extra keys.",
-          },
-          {
-            inline_data: {
-              mime_type: mimeType,
-              data: imageBase64,
-            },
-          },
-        ],
-      },
-    ],
-    generationConfig: {
-      response_mime_type: "application/json",
-    },
+  const promptText =
+    "You are verifying whether an uploaded pill image matches the user's medication. " +
+    "Respond with JSON only using this exact schema: " +
+    '{"verified":boolean,"confidence":number,"description":string,"concerns":string[],"safe_to_take":boolean,"message":string}.' +
+    ` Medication name: ${medication.name}.` +
+    ` Dosage: ${medication.dosage}.` +
+    ` Instructions: ${medication.instructions ?? "N/A"}.` +
+    ` Schedule: ${medication.schedule ?? "N/A"}.` +
+    " Use a confidence between 0 and 1. Do not include markdown fences or extra keys.";
+
+  // Attach image base64 after the instructions
+  const anthropicPrompt = promptText + ` Image mime_type: ${mimeType}. Image base64: ${imageBase64}`;
+
+  const anthropicPayload = {
+    model: ANTHROPIC_MODEL,
+    prompt: `\n\nHuman: ${anthropicPrompt}\n\nAssistant:`,
+    max_tokens_to_sample: 512,
+    temperature: 0,
+    stop_sequences: ["\n\nHuman:"],
   };
 
-  let geminiApiResponse: Response;
+  let anthropicApiResponse: Response;
   try {
-    geminiApiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": geminiApiKey,
-        },
-        body: JSON.stringify(geminiPayload),
+    anthropicApiResponse = await fetch("https://api.anthropic.com/v1/complete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicApiKey,
       },
-    );
+      body: JSON.stringify(anthropicPayload),
+    });
   } catch {
-    return jsonResponse(502, { error: "Failed to reach Gemini API" });
+    return jsonResponse(502, { error: "Failed to reach Anthropic API" });
   }
 
-  let geminiResponseJson: Record<string, unknown>;
+  let anthropicResponseJson: Record<string, unknown>;
   try {
-    geminiResponseJson = await geminiApiResponse.json();
+    anthropicResponseJson = await anthropicApiResponse.json();
   } catch {
-    return jsonResponse(502, { error: "Gemini returned a non-JSON response" });
+    return jsonResponse(502, { error: "Anthropic returned a non-JSON response" });
   }
 
-  if (!geminiApiResponse.ok) {
-    return jsonResponse(502, { error: "Gemini request failed" });
+  if (!anthropicApiResponse.ok) {
+    return jsonResponse(502, { error: "Anthropic request failed" });
   }
 
-  const candidateText = extractCandidateText(geminiResponseJson);
-  if (!candidateText) {
-    return jsonResponse(502, { error: "Gemini response did not include a verification result" });
+  // Extract completion text from common response shapes
+  let completionText: string | null = null;
+  if (typeof (anthropicResponseJson as any).completion === "string") {
+    completionText = (anthropicResponseJson as any).completion;
+  } else if (typeof (anthropicResponseJson as any).completion_text === "string") {
+    completionText = (anthropicResponseJson as any).completion_text;
+  } else if (typeof (anthropicResponseJson as any).output === "string") {
+    completionText = (anthropicResponseJson as any).output;
+  }
+
+  if (!completionText) {
+    return jsonResponse(502, { error: "Anthropic response did not include a verification result" });
   }
 
   let verificationResult: VerificationResult;
   try {
-    verificationResult = parseGeminiResponse(candidateText);
+    verificationResult = parseModelResponse(completionText);
   } catch {
-    return jsonResponse(502, { error: "Failed to validate Gemini verification JSON" });
+    return jsonResponse(502, { error: "Failed to validate model verification JSON" });
   }
 
   if (doseLogId) {

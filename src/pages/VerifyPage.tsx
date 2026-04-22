@@ -166,7 +166,7 @@ export default function VerifyPage() {
         <div>
           <p className="text-sm font-black uppercase tracking-[0.22em] text-teal-700">AI verification</p>
           <h1 className="mt-3 text-4xl font-black tracking-tight text-slate-950 sm:text-6xl">Verify before marking taken.</h1>
-          <p className="mt-4 text-slate-600">Images go to private storage first. The browser never talks to Gemini directly.</p>
+          <p className="mt-4 text-slate-600">Images go to private storage first. The browser never talks to Anthropic directly.</p>
         </div>
 
         <Card className="grid gap-4">
