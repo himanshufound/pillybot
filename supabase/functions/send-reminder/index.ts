@@ -336,25 +336,32 @@ Deno.serve(async (request) => {
     return jsonResponse(401, { error: "Unauthorized" });
   }
 
+  const providedSecret = request.headers.get("x-cron-secret");
+  if (!providedSecret) {
+    return jsonResponse(401, { error: "Unauthorized" });
+  }
+
   const cronSecret = getRequiredEnv("CRON_SECRET");
+  if (!cronSecret) {
+    return jsonResponse(503, { error: "Service temporarily unavailable" });
+  }
+
+  if (providedSecret !== cronSecret) {
+    return jsonResponse(401, { error: "Unauthorized" });
+  }
+
   const supabaseUrl = getRequiredEnv("SUPABASE_URL");
   const supabaseServiceRoleKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
   const vapidPrivateKey = getRequiredEnv("VAPID_PRIVATE_KEY");
   const vapidPublicKey = getRequiredEnv("VAPID_PUBLIC_KEY");
 
   if (
-    !cronSecret ||
     !supabaseUrl ||
     !supabaseServiceRoleKey ||
     !vapidPrivateKey ||
     !vapidPublicKey
   ) {
-    return jsonResponse(500, { error: "Server configuration is incomplete" });
-  }
-
-  const providedSecret = request.headers.get("x-cron-secret");
-  if (!providedSecret || providedSecret !== cronSecret) {
-    return jsonResponse(401, { error: "Unauthorized" });
+    return jsonResponse(503, { error: "Service temporarily unavailable" });
   }
 
   webpush.setVapidDetails(
