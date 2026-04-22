@@ -1,6 +1,31 @@
 const SITE_BUCKET = "site";
 const FUNCTION_PREFIXES = ["/functions/v1/static-site", "/static-site"];
 
+// MIME type mapping for common file extensions
+const MIME_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".eot": "application/vnd.ms-fontobject",
+};
+
+function getMimeType(pathname: string): string {
+  const ext = pathname.toLowerCase().substring(pathname.lastIndexOf("."));
+  return MIME_TYPES[ext] || "application/octet-stream";
+}
+
 function publicBucketBaseUrl() {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   if (!supabaseUrl) {
@@ -18,10 +43,19 @@ function isAssetPath(pathname: string): boolean {
     pathname === "/favicon.ico" ||
     pathname.endsWith(".css") ||
     pathname.endsWith(".js") ||
+    pathname.endsWith(".mjs") ||
     pathname.endsWith(".json") ||
     pathname.endsWith(".svg") ||
     pathname.endsWith(".png") ||
-    pathname.endsWith(".ico")
+    pathname.endsWith(".jpg") ||
+    pathname.endsWith(".jpeg") ||
+    pathname.endsWith(".gif") ||
+    pathname.endsWith(".ico") ||
+    pathname.endsWith(".webp") ||
+    pathname.endsWith(".woff") ||
+    pathname.endsWith(".woff2") ||
+    pathname.endsWith(".ttf") ||
+    pathname.endsWith(".eot")
   );
 }
 
@@ -33,6 +67,23 @@ async function proxyFromBucket(baseUrl: string, pathname: string, request: Reque
   });
 
   if (upstream.status !== 404 || isAssetPath(pathname) || pathname === "/index.html") {
+    // For successful responses, ensure correct MIME type
+    if (upstream.ok) {
+      const mimeType = getMimeType(pathname);
+      const headers = new Headers(upstream.headers);
+      headers.set("Content-Type", mimeType);
+      
+      // Cache static assets aggressively
+      if (isAssetPath(pathname)) {
+        headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      }
+      
+      return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers,
+      });
+    }
     return upstream;
   }
 
