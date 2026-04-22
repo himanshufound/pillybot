@@ -40,6 +40,7 @@ cp .env.example .env.local
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 - `VITE_VAPID_PUBLIC_KEY`
+- `VITE_BASE_PATH` (optional, defaults to `/`; set to `/functions/v1/static-site/` only when building for the Supabase `static-site` function)
 
 4. Start the app:
 
