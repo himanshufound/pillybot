@@ -26,6 +26,12 @@ function jsonResponse(status: number, body: Record<string, unknown>) {
   });
 }
 
+function errorResponse(status: number, code: string, message: string) {
+  return jsonResponse(status, {
+    error: { code, message },
+  });
+}
+
 function getBearerToken(request: Request): string | null {
   const authorization = request.headers.get("Authorization");
   if (!authorization) return null;
@@ -199,11 +205,11 @@ function parseModelResponse(text: string): VerificationResult {
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
-    return new Response("ok");
+    return jsonResponse(200, { ok: true });
   }
 
   if (request.method !== "POST") {
-    return jsonResponse(405, { error: "Method not allowed" });
+    return errorResponse(405, "method_not_allowed", "Method not allowed");
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -211,12 +217,12 @@ Deno.serve(async (request) => {
   const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
 
   if (!supabaseUrl || !serviceRoleKey || !anthropicApiKey) {
-    return jsonResponse(500, { error: "Server is missing required configuration" });
+    return errorResponse(500, "server_misconfigured", "Server is missing required configuration");
   }
 
   const token = getBearerToken(request);
   if (!token) {
-    return jsonResponse(401, { error: "Missing or invalid Authorization header" });
+    return errorResponse(401, "unauthorized", "Missing or invalid Authorization header");
   }
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
@@ -229,23 +235,23 @@ Deno.serve(async (request) => {
   } = await adminClient.auth.getUser(token);
 
   if (authError || !user) {
-    return jsonResponse(401, { error: "Invalid or expired token" });
+    return errorResponse(401, "unauthorized", "Invalid or expired token");
   }
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return jsonResponse(400, { error: "Request body must be valid JSON" });
+    return errorResponse(400, "invalid_json", "Request body must be valid JSON");
   }
 
   if (!isValidRequestBody(body)) {
-    return jsonResponse(400, { error: "Body must include imagePath and medicationId, with optional doseLogId" });
+    return errorResponse(400, "invalid_body", "Body must include imagePath and medicationId, with optional doseLogId");
   }
 
   const normalizedImagePath = normalizeStoragePath(body.imagePath);
   if (!normalizedImagePath || !isAuthorizedImagePath(normalizedImagePath, user.id)) {
-    return jsonResponse(403, { error: "imagePath is outside the caller's allowed storage path" });
+    return errorResponse(403, "forbidden_path", "imagePath is outside the caller's allowed storage path");
   }
 
   const { medicationId, doseLogId } = body;
@@ -258,11 +264,11 @@ Deno.serve(async (request) => {
     .maybeSingle();
 
   if (medicationError) {
-    return jsonResponse(500, { error: "Failed to load medication" });
+    return errorResponse(500, "medication_load_failed", "Failed to load medication");
   }
 
   if (!medication) {
-    return jsonResponse(404, { error: "Medication not found" });
+    return errorResponse(404, "medication_not_found", "Medication not found");
   }
 
   if (doseLogId) {
@@ -275,11 +281,11 @@ Deno.serve(async (request) => {
       .maybeSingle();
 
     if (doseLogError) {
-      return jsonResponse(500, { error: "Failed to load dose log" });
+      return errorResponse(500, "dose_log_load_failed", "Failed to load dose log");
     }
 
     if (!doseLog) {
-      return jsonResponse(403, { error: "Dose log does not belong to this user and medication" });
+      return errorResponse(403, "forbidden_dose_log", "Dose log does not belong to this user and medication");
     }
   }
 
@@ -289,21 +295,21 @@ Deno.serve(async (request) => {
     .list(folder, { limit: 100, search: fileName });
 
   if (listError) {
-    return jsonResponse(500, { error: "Failed to inspect image metadata" });
+    return errorResponse(500, "storage_metadata_failed", "Failed to inspect image metadata");
   }
 
   const objectRow = listedObjects?.find((item) => item.name === fileName) ?? null;
   if (!objectRow) {
-    return jsonResponse(404, { error: "Image not found" });
+    return errorResponse(404, "image_not_found", "Image not found");
   }
 
   const objectSize = getObjectSizeBytes(objectRow.metadata as Record<string, unknown> | null | undefined);
   if (!objectSize) {
-    return jsonResponse(400, { error: "Image metadata is invalid" });
+    return errorResponse(400, "invalid_image_metadata", "Image metadata is invalid");
   }
 
   if (objectSize > MAX_IMAGE_BYTES) {
-    return jsonResponse(413, { error: "Image exceeds the 5MB limit" });
+    return errorResponse(413, "image_too_large", "Image exceeds the 5MB limit");
   }
 
   const { data: imageBlob, error: downloadError } = await adminClient.storage
@@ -311,27 +317,27 @@ Deno.serve(async (request) => {
     .download(normalizedImagePath);
 
   if (downloadError || !imageBlob) {
-    return jsonResponse(404, { error: "Image not found" });
+    return errorResponse(404, "image_not_found", "Image not found");
   }
 
   if (imageBlob.size > MAX_IMAGE_BYTES) {
-    return jsonResponse(413, { error: "Image exceeds the 5MB limit" });
+    return errorResponse(413, "image_too_large", "Image exceeds the 5MB limit");
   }
 
   let imageBytes: Uint8Array;
   try {
     imageBytes = new Uint8Array(await imageBlob.arrayBuffer());
   } catch {
-    return jsonResponse(500, { error: "Failed to read image bytes" });
+    return errorResponse(500, "image_read_failed", "Failed to read image bytes");
   }
 
   if (imageBytes.length === 0) {
-    return jsonResponse(400, { error: "Image file is empty" });
+    return errorResponse(400, "empty_image", "Image file is empty");
   }
 
   const mimeType = getAllowedMimeType(imageBytes);
   if (!mimeType) {
-    return jsonResponse(400, { error: "Only JPEG and PNG images are allowed" });
+    return errorResponse(400, "invalid_image_type", "Only JPEG and PNG images are allowed");
   }
 
   const imageBase64 = toBase64(imageBytes);
@@ -375,30 +381,30 @@ Deno.serve(async (request) => {
       body: JSON.stringify(anthropicPayload),
     });
   } catch {
-    return jsonResponse(502, { error: "Failed to reach Anthropic API" });
+    return errorResponse(502, "upstream_unavailable", "Failed to reach Anthropic API");
   }
 
   let anthropicResponseJson: Record<string, unknown>;
   try {
     anthropicResponseJson = await anthropicApiResponse.json();
   } catch {
-    return jsonResponse(502, { error: "Anthropic returned a non-JSON response" });
+    return errorResponse(502, "upstream_invalid_response", "Anthropic returned a non-JSON response");
   }
 
   if (!anthropicApiResponse.ok) {
-    return jsonResponse(502, { error: "Anthropic request failed" });
+    return errorResponse(502, "upstream_request_failed", "Anthropic request failed");
   }
 
   const completionText = extractModelText(anthropicResponseJson);
   if (!completionText) {
-    return jsonResponse(502, { error: "Anthropic response did not include a verification result" });
+    return errorResponse(502, "upstream_missing_content", "Anthropic response did not include a verification result");
   }
 
   let verificationResult: VerificationResult;
   try {
     verificationResult = parseModelResponse(completionText);
   } catch {
-    return jsonResponse(502, { error: "Failed to validate model verification JSON" });
+    return errorResponse(502, "upstream_invalid_payload", "Failed to validate model verification JSON");
   }
 
   if (doseLogId) {
@@ -410,7 +416,7 @@ Deno.serve(async (request) => {
       .eq("medication_id", medicationId);
 
     if (updateError) {
-      return jsonResponse(500, { error: "Failed to update dose log verification result" });
+      return errorResponse(500, "dose_log_update_failed", "Failed to update dose log verification result");
     }
   }
 

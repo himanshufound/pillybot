@@ -2,6 +2,7 @@ create extension if not exists pgcrypto;
 
 create table public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
+  email text,
   full_name text,
   avatar_url text,
   timezone text not null default 'UTC',
@@ -80,9 +81,10 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, full_name, avatar_url)
+  insert into public.profiles (id, email, full_name, avatar_url)
   values (
     new.id,
+    new.email,
     coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name'),
     new.raw_user_meta_data ->> 'avatar_url'
   )

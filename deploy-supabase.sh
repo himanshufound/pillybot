@@ -32,25 +32,30 @@ if [ -z "${SUPABASE_PROJECT_REF:-}" ]; then
 
 Recommended manual steps (replace placeholders):
 
-# 1) Apply DB migrations (use the Supabase MCP tools or a linked CLI session):
+# MANUAL REQUIRED: Apply DB migrations (use the Supabase MCP tools or a linked CLI session):
 #   - 001_initial_schema
 #   - 002_storage
 #   - 004_schema_alignment
+#   - 005_profile_email_sync
+#   - 006_edge_rate_limit
 # The project already includes a remote site bucket migration.
 
-# 2) Deploy Edge Functions:
+# MANUAL REQUIRED: Deploy Edge Functions:
 #   supabase functions deploy verify-pill --project-ref $SUPABASE_PROJECT_REF --use-api
 #   supabase functions deploy parse-prescription --project-ref $SUPABASE_PROJECT_REF --use-api
 #   supabase functions deploy send-reminder --project-ref $SUPABASE_PROJECT_REF --use-api --no-verify-jwt
 #   supabase functions deploy static-site --project-ref $SUPABASE_PROJECT_REF --use-api --no-verify-jwt
 
-# 3) Upload static web assets if you are serving from the public site bucket:
+# MANUAL REQUIRED: Upload static web assets if you are serving from the public site bucket:
 #   supabase storage cp -r dist/. ss:///site
 
-# 4) Set required project env vars in Supabase (in Settings > API or Functions):
+# MANUAL REQUIRED: Set required project env vars in Supabase (in Settings > API or Functions):
 #   SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, ANTHROPIC_API_KEY
 
-# 5) Verify:
+# MANUAL REQUIRED: Configure Vercel project env vars:
+#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_VAPID_PUBLIC_KEY
+#
+# MANUAL REQUIRED: Verify:
 #   - Visit the project URL and the deployed static-site function
 #   - Check Edge Function logs in Supabase dashboard
 #   - Run smoke requests against endpoints

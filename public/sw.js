@@ -2,7 +2,7 @@ self.addEventListener("push", (event) => {
   let payload = {
     title: "Medication Reminder",
     body: "It's time to take your medication",
-    url: "/dashboard",
+    url: "/",
   };
 
   if (event.data) {

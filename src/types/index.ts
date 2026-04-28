@@ -1,4 +1,4 @@
-export type DoseStatus = "pending" | "scheduled" | "taken" | "missed" | "skipped";
+export type DoseStatus = "scheduled" | "taken" | "missed" | "skipped";
 
 export type Profile = {
   id: string;
@@ -46,7 +46,6 @@ export type CaregiverLink = {
   id: string;
   caregiver_id: string;
   patient_id: string;
-  relationship: string | null;
   status?: "pending" | "accepted" | "declined";
   created_at: string;
   patient?: Profile | null;

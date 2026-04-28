@@ -1,4 +1,4 @@
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Loader } from "../components/Loader";
@@ -26,9 +26,20 @@ export default function ParsePrescriptionPage() {
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<ParsedPrescriptionResult | null>(null);
 
-  const previewUrl = useMemo(() => {
-    if (!file) return null;
-    return URL.createObjectURL(file);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
   }, [file]);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {

@@ -62,7 +62,16 @@ export default function DashboardPage() {
 
         setDoseLogs((todayResult.data ?? []).map((row) => {
           const medication = Array.isArray(row.medications) ? row.medications[0] : row.medications;
-          return { ...row, medications: medication ?? null } as unknown as DoseLog;
+          return {
+            id: row.id,
+            user_id: row.user_id,
+            medication_id: row.medication_id,
+            scheduled_at: row.scheduled_at,
+            taken_at: row.taken_at,
+            status: row.status as DoseLog["status"],
+            notes: row.notes,
+            medications: medication ?? null,
+          };
         }));
         const cleanDays = new Set<string>();
         for (const row of streakResult.data ?? []) {
@@ -81,7 +90,7 @@ export default function DashboardPage() {
     loadDashboard();
   }, [user]);
 
-  const upcoming = doseLogs.filter((dose) => dose.status === "pending" || dose.status === "scheduled");
+  const upcoming = doseLogs.filter((dose) => dose.status === "scheduled");
   const completed = doseLogs.filter((dose) => dose.status === "taken");
   const missed = doseLogs.filter((dose) => dose.status === "missed");
 

@@ -23,7 +23,6 @@ type RelationshipRecord = {
   id: string;
   patient: Profile | Profile[] | null;
   patient_id: string;
-  relationship: string | null;
   status?: "pending" | "accepted" | "declined";
 };
 
@@ -61,7 +60,7 @@ export default function CaregiverPage() {
       const { data: links, error: linkError } = await supabase
         .from("caregiver_links")
         .select(
-          "id, caregiver_id, patient_id, relationship, status, created_at, caregiver:profiles!caregiver_links_caregiver_id_fkey(id, full_name, avatar_url, timezone), patient:profiles!caregiver_links_patient_id_fkey(id, full_name, avatar_url, timezone)",
+          "id, caregiver_id, patient_id, status, created_at, caregiver:profiles!caregiver_links_caregiver_id_fkey(id, full_name, avatar_url, timezone), patient:profiles!caregiver_links_patient_id_fkey(id, full_name, avatar_url, timezone)",
         )
         .or(`caregiver_id.eq.${userId},patient_id.eq.${userId}`);
 
@@ -162,12 +161,11 @@ export default function CaregiverPage() {
         throw new Error("You cannot link yourself as your own patient.");
       }
 
-      const { error: insertError } = await supabase.from("caregiver_links").insert({
-        caregiver_id: user.id,
-        patient_id: patientId,
-        relationship: "caregiver",
-        status: "pending",
-      });
+        const { error: insertError } = await supabase.from("caregiver_links").insert({
+          caregiver_id: user.id,
+          patient_id: patientId,
+          status: "pending",
+        });
 
       if (insertError) throw insertError;
       setIdentifier("");

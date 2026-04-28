@@ -21,6 +21,15 @@ const MIME_TYPES: Record<string, string> = {
   ".eot": "application/vnd.ms-fontobject",
 };
 
+function jsonResponse(status: number, code: string, message: string) {
+  return new Response(JSON.stringify({ error: { code, message } }), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
 function getMimeType(pathname: string): string {
   const ext = pathname.toLowerCase().substring(pathname.lastIndexOf("."));
   return MIME_TYPES[ext] || "application/octet-stream";
@@ -110,12 +119,12 @@ function toBucketPath(pathname: string): string {
 
 Deno.serve(async (request) => {
   if (request.method !== "GET" && request.method !== "HEAD") {
-    return new Response("Method not allowed", { status: 405 });
+    return jsonResponse(405, "method_not_allowed", "Method not allowed");
   }
 
   const baseUrl = publicBucketBaseUrl();
   if (!baseUrl) {
-    return new Response("Missing SUPABASE_URL", { status: 500 });
+    return jsonResponse(500, "server_misconfigured", "Missing SUPABASE_URL");
   }
 
   const url = new URL(request.url);

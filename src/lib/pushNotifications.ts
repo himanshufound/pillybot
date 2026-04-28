@@ -1,16 +1,8 @@
 import { supabase } from "./supabase";
+import { resolveServiceWorkerPath, urlBase64ToUint8Array } from "./pushNotifications.utils";
 
-function urlBase64ToUint8Array(base64String: string) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = `${base64String}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-
-  for (let index = 0; index < rawData.length; index += 1) {
-    outputArray[index] = rawData.charCodeAt(index);
-  }
-
-  return outputArray;
+function serviceWorkerPath() {
+  return resolveServiceWorkerPath(import.meta.env.BASE_URL as string | undefined, window.location.origin);
 }
 
 async function getRegistration() {
@@ -18,7 +10,13 @@ async function getRegistration() {
     throw new Error("Service workers are not supported in this browser.");
   }
 
-  return navigator.serviceWorker.register("/sw.js");
+  const swPath = serviceWorkerPath();
+  const existingRegistration = await navigator.serviceWorker.getRegistration(swPath);
+  if (existingRegistration) {
+    return existingRegistration;
+  }
+
+  return navigator.serviceWorker.register(swPath);
 }
 
 export async function subscribePush(userId: string) {
@@ -71,7 +69,7 @@ export async function subscribePush(userId: string) {
 }
 
 export async function unsubscribePush(userId: string) {
-  const registration = await navigator.serviceWorker.getRegistration("/sw.js");
+  const registration = await navigator.serviceWorker.getRegistration(serviceWorkerPath());
   const subscription = await registration?.pushManager.getSubscription();
 
   if (!subscription) {

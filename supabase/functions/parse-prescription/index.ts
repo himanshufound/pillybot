@@ -16,6 +16,8 @@ type ParsedPrescriptionResult = {
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const PRESCRIPTION_TEMP_BUCKET = "prescription-temp";
 const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-3-5-sonnet-latest";
+const RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
+const RATE_LIMIT_MAX_REQUESTS = 8;
 
 function jsonResponse(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
@@ -23,6 +25,12 @@ function jsonResponse(status: number, body: Record<string, unknown>) {
     headers: {
       "Content-Type": "application/json",
     },
+  });
+}
+
+function errorResponse(status: number, code: string, message: string) {
+  return jsonResponse(status, {
+    error: { code, message },
   });
 }
 
@@ -200,8 +208,12 @@ function parseModelResponse(text: string): ParsedPrescriptionResult {
 }
 
 Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") {
+    return jsonResponse(200, { ok: true });
+  }
+
   if (request.method !== "POST") {
-    return jsonResponse(405, { error: "Method not allowed" });
+    return errorResponse(405, "method_not_allowed", "Method not allowed");
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -209,12 +221,12 @@ Deno.serve(async (request) => {
   const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
 
   if (!supabaseUrl || !serviceRoleKey || !anthropicApiKey) {
-    return jsonResponse(500, { error: "Server configuration is incomplete" });
+    return errorResponse(500, "server_misconfigured", "Server configuration is incomplete");
   }
 
   const token = getBearerToken(request);
   if (!token) {
-    return jsonResponse(401, { error: "Missing or invalid Authorization header" });
+    return errorResponse(401, "unauthorized", "Missing or invalid Authorization header");
   }
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
@@ -230,23 +242,38 @@ Deno.serve(async (request) => {
   } = await adminClient.auth.getUser(token);
 
   if (authError || !user) {
-    return jsonResponse(401, { error: "Invalid or expired token" });
+    return errorResponse(401, "unauthorized", "Invalid or expired token");
   }
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return jsonResponse(400, { error: "Request body must be valid JSON" });
+    return errorResponse(400, "invalid_json", "Request body must be valid JSON");
   }
 
   if (!isValidRequestBody(body)) {
-    return jsonResponse(400, { error: "Body must include imagePath" });
+    return errorResponse(400, "invalid_body", "Body must include imagePath");
+  }
+
+  const { data: isAllowed, error: rateLimitError } = await adminClient.rpc("enforce_edge_rate_limit", {
+    p_user_id: user.id,
+    p_function_name: "parse-prescription",
+    p_limit: RATE_LIMIT_MAX_REQUESTS,
+    p_window_seconds: RATE_LIMIT_WINDOW_SECONDS,
+  });
+
+  if (rateLimitError) {
+    return errorResponse(500, "rate_limit_failed", "Failed to validate request rate limit");
+  }
+
+  if (isAllowed !== true) {
+    return errorResponse(429, "rate_limited", "Too many parse requests. Please try again shortly.");
   }
 
   const normalizedImagePath = normalizeStoragePath(body.imagePath);
   if (!normalizedImagePath || !isAuthorizedImagePath(normalizedImagePath, user.id)) {
-    return jsonResponse(403, { error: "imagePath is outside the caller's allowed storage path" });
+    return errorResponse(403, "forbidden_path", "imagePath is outside the caller's allowed storage path");
   }
 
   const { folder, fileName } = splitParentPath(normalizedImagePath);
@@ -258,21 +285,21 @@ Deno.serve(async (request) => {
     });
 
   if (listError) {
-    return jsonResponse(500, { error: "Failed to inspect image metadata" });
+    return errorResponse(500, "storage_metadata_failed", "Failed to inspect image metadata");
   }
 
   const objectRow = listedObjects?.find((item) => item.name === fileName) ?? null;
   if (!objectRow) {
-    return jsonResponse(404, { error: "Image not found" });
+    return errorResponse(404, "image_not_found", "Image not found");
   }
 
   const objectSize = Number((objectRow.metadata as Record<string, unknown> | undefined)?.size);
   if (!Number.isFinite(objectSize) || objectSize <= 0) {
-    return jsonResponse(400, { error: "Image metadata is invalid" });
+    return errorResponse(400, "invalid_image_metadata", "Image metadata is invalid");
   }
 
   if (objectSize > MAX_IMAGE_BYTES) {
-    return jsonResponse(413, { error: "Image exceeds the 5MB limit" });
+    return errorResponse(413, "image_too_large", "Image exceeds the 5MB limit");
   }
 
   const { data: imageBlob, error: downloadError } = await adminClient.storage
@@ -280,27 +307,27 @@ Deno.serve(async (request) => {
     .download(normalizedImagePath);
 
   if (downloadError || !imageBlob) {
-    return jsonResponse(404, { error: "Image not found" });
+    return errorResponse(404, "image_not_found", "Image not found");
   }
 
   if (imageBlob.size > MAX_IMAGE_BYTES) {
-    return jsonResponse(413, { error: "Image exceeds the 5MB limit" });
+    return errorResponse(413, "image_too_large", "Image exceeds the 5MB limit");
   }
 
   let imageBytes: Uint8Array;
   try {
     imageBytes = new Uint8Array(await imageBlob.arrayBuffer());
   } catch {
-    return jsonResponse(500, { error: "Failed to read image bytes" });
+    return errorResponse(500, "image_read_failed", "Failed to read image bytes");
   }
 
   if (imageBytes.length === 0) {
-    return jsonResponse(400, { error: "Image file is empty" });
+    return errorResponse(400, "empty_image", "Image file is empty");
   }
 
   const mimeType = getAllowedMimeType(imageBytes);
   if (!mimeType) {
-    return jsonResponse(400, { error: "Only JPEG and PNG images are allowed" });
+    return errorResponse(400, "invalid_image_type", "Only JPEG and PNG images are allowed");
   }
 
   const imageBase64 = toBase64(imageBytes);
@@ -344,30 +371,30 @@ Deno.serve(async (request) => {
       body: JSON.stringify(anthropicPayload),
     });
   } catch {
-    return jsonResponse(502, { error: "Failed to reach Anthropic API" });
+    return errorResponse(502, "upstream_unavailable", "Failed to reach Anthropic API");
   }
 
   let anthropicResponseJson: Record<string, unknown>;
   try {
     anthropicResponseJson = await anthropicApiResponse.json();
   } catch {
-    return jsonResponse(502, { error: "Anthropic returned a non-JSON response" });
+    return errorResponse(502, "upstream_invalid_response", "Anthropic returned a non-JSON response");
   }
 
   if (!anthropicApiResponse.ok) {
-    return jsonResponse(502, { error: "Anthropic request failed" });
+    return errorResponse(502, "upstream_request_failed", "Anthropic request failed");
   }
 
   const completionText = extractModelText(anthropicResponseJson);
   if (!completionText) {
-    return jsonResponse(502, { error: "Anthropic response did not include a parsing result" });
+    return errorResponse(502, "upstream_missing_content", "Anthropic response did not include a parsing result");
   }
 
   let parsedPrescription: ParsedPrescriptionResult;
   try {
     parsedPrescription = parseModelResponse(completionText);
   } catch {
-    return jsonResponse(502, { error: "Failed to validate model parsing JSON" });
+    return errorResponse(502, "upstream_invalid_payload", "Failed to validate model parsing JSON");
   }
 
   const { error: deleteError } = await adminClient.storage

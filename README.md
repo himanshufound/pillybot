@@ -61,6 +61,8 @@ npm run build
 - `supabase/migrations/001_initial_schema.sql`
 - `supabase/migrations/002_storage.sql`
 - `supabase/migrations/004_schema_alignment.sql`
+- `supabase/migrations/005_profile_email_sync.sql`
+- `supabase/migrations/006_edge_rate_limit.sql`
 
 ### Edge Functions
 

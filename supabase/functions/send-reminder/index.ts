@@ -45,23 +45,29 @@ const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 const REMINDER_PAYLOAD = JSON.stringify({
   title: "Medication Reminder",
   body: "It's time to take your medication",
-  url: "/dashboard",
+  url: "/",
 });
 
 const ESCALATION_PAYLOAD = JSON.stringify({
   title: "Missed Dose Alert",
   body: "A linked patient has a dose overdue by 30 minutes",
-  url: "/dashboard",
+  url: "/",
 });
 
 const jsonHeaders = {
   "Content-Type": "application/json",
 };
 
-function jsonResponse(status: number, body: Record<string, number | string>) {
+function jsonResponse(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
     status,
     headers: jsonHeaders,
+  });
+}
+
+function errorResponse(status: number, code: string, message: string) {
+  return jsonResponse(status, {
+    error: { code, message },
   });
 }
 
@@ -223,12 +229,12 @@ async function fetchPendingDoseLogs(
   const { data, error } = await supabase
     .from("dose_logs")
     .select("id, user_id, medication_id, scheduled_at, status")
-    .eq("status", "pending")
+    .eq("status", "scheduled")
     .lte("scheduled_at", nowIso)
     .gte("scheduled_at", windowStartIso);
 
   if (error || !Array.isArray(data)) {
-    throw new Error("Failed to fetch pending dose logs");
+    throw new Error("Failed to fetch scheduled dose logs");
   }
 
   return data.filter(isDoseLogRow).filter((row) => isValidDateString(row.scheduled_at));
@@ -241,7 +247,7 @@ async function fetchOverdueDoseLogs(
   const { data, error } = await supabase
     .from("dose_logs")
     .select("id, user_id, medication_id, scheduled_at, status")
-    .eq("status", "pending")
+    .eq("status", "scheduled")
     .lte("scheduled_at", thresholdIso);
 
   if (error || !Array.isArray(data)) {
@@ -259,7 +265,7 @@ async function markDoseAsMissed(
     .from("dose_logs")
     .update({ status: "missed" })
     .eq("id", doseLogId)
-    .eq("status", "pending");
+    .eq("status", "scheduled");
 
   if (error) {
     throw new Error("Failed to mark dose as missed");
@@ -329,25 +335,25 @@ async function handleEscalation(
 
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
-    return jsonResponse(405, { error: "Method not allowed" });
+    return errorResponse(405, "method_not_allowed", "Method not allowed");
   }
 
   if (request.headers.has("authorization")) {
-    return jsonResponse(401, { error: "Unauthorized" });
+    return errorResponse(401, "unauthorized", "Authorization header is not allowed");
   }
 
   const providedSecret = request.headers.get("x-cron-secret");
   if (!providedSecret) {
-    return jsonResponse(401, { error: "Unauthorized" });
+    return errorResponse(401, "missing_cron_secret", "Missing x-cron-secret header");
   }
 
   const cronSecret = getRequiredEnv("CRON_SECRET");
   if (!cronSecret) {
-    return jsonResponse(503, { error: "Service temporarily unavailable" });
+    return errorResponse(503, "server_misconfigured", "Service temporarily unavailable");
   }
 
   if (providedSecret !== cronSecret) {
-    return jsonResponse(401, { error: "Unauthorized" });
+    return errorResponse(401, "invalid_cron_secret", "Invalid x-cron-secret header");
   }
 
   const supabaseUrl = getRequiredEnv("SUPABASE_URL");
@@ -361,7 +367,7 @@ Deno.serve(async (request) => {
     !vapidPrivateKey ||
     !vapidPublicKey
   ) {
-    return jsonResponse(503, { error: "Service temporarily unavailable" });
+    return errorResponse(503, "server_misconfigured", "Service temporarily unavailable");
   }
 
   webpush.setVapidDetails(
@@ -395,7 +401,7 @@ Deno.serve(async (request) => {
       thirtyMinutesAgo.toISOString(),
     );
   } catch {
-    return jsonResponse(500, { error: "Failed to load reminder data" });
+    return errorResponse(500, "reminder_data_load_failed", "Failed to load reminder data");
   }
 
   const counters: Counters = {
