@@ -38,6 +38,16 @@ type Counters = {
   errors: number;
 };
 
+type FunctionEventInsert = {
+  function_name: "send-reminder";
+  event_type: string;
+  status: "success" | "warning" | "failure";
+  user_id?: string | null;
+  medication_id?: string | null;
+  dose_log_id?: string | null;
+  details?: Record<string, unknown>;
+};
+
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const THIRTY_MINUTES_MS = 30 * 60 * 1000;
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
@@ -129,6 +139,22 @@ function getRequiredEnv(name: string): string | null {
 
 function increment(target: Counters, field: keyof Counters, value = 1) {
   target[field] += value;
+}
+
+async function insertFunctionEvent(supabase: SupabaseClient, payload: FunctionEventInsert) {
+  const { error } = await supabase.from("edge_function_events").insert({
+    function_name: payload.function_name,
+    event_type: payload.event_type,
+    status: payload.status,
+    user_id: payload.user_id ?? null,
+    medication_id: payload.medication_id ?? null,
+    dose_log_id: payload.dose_log_id ?? null,
+    details: payload.details ?? {},
+  });
+
+  if (error) {
+    console.error("Failed to write edge function event", error);
+  }
 }
 
 async function fetchSubscriptions(
@@ -442,6 +468,19 @@ Deno.serve(async (request) => {
         );
         increment(counters, "alerts_created", escalationResult.alertsCreated);
         increment(counters, "notifications_sent", escalationResult.notificationsSent);
+        await insertFunctionEvent(supabase, {
+          function_name: "send-reminder",
+          event_type: "caregiver_alert_sent",
+          status: "success",
+          user_id: doseLog.user_id,
+          medication_id: doseLog.medication_id,
+          dose_log_id: doseLog.id,
+          details: {
+            notifications_sent: escalationResult.notificationsSent,
+            alerts_created: escalationResult.alertsCreated,
+            overdue_minutes: Math.round(overdueMs / 60000),
+          },
+        });
 
         await markDoseAsMissed(supabase, doseLog.id);
         continue;
@@ -456,6 +495,19 @@ Deno.serve(async (request) => {
         );
         increment(counters, "alerts_created", escalationResult.alertsCreated);
         increment(counters, "notifications_sent", escalationResult.notificationsSent);
+        await insertFunctionEvent(supabase, {
+          function_name: "send-reminder",
+          event_type: "caregiver_alert_sent",
+          status: "success",
+          user_id: doseLog.user_id,
+          medication_id: doseLog.medication_id,
+          dose_log_id: doseLog.id,
+          details: {
+            notifications_sent: escalationResult.notificationsSent,
+            alerts_created: escalationResult.alertsCreated,
+            overdue_minutes: Math.round(overdueMs / 60000),
+          },
+        });
 
         continue;
       }
@@ -472,8 +524,31 @@ Deno.serve(async (request) => {
 
       const sentCount = await notifySubscriptions(subscriptions, REMINDER_PAYLOAD);
       increment(counters, "notifications_sent", sentCount);
+      if (sentCount > 0) {
+        await insertFunctionEvent(supabase, {
+          function_name: "send-reminder",
+          event_type: "reminder_sent",
+          status: "success",
+          user_id: doseLog.user_id,
+          medication_id: doseLog.medication_id,
+          dose_log_id: doseLog.id,
+          details: {
+            notifications_sent: sentCount,
+            overdue_minutes: Math.max(0, Math.round(overdueMs / 60000)),
+          },
+        });
+      }
     } catch {
       increment(counters, "errors");
+      await insertFunctionEvent(supabase, {
+        function_name: "send-reminder",
+        event_type: "reminder_error",
+        status: "failure",
+        user_id: doseLog.user_id,
+        medication_id: doseLog.medication_id,
+        dose_log_id: doseLog.id,
+        details: { scheduled_at: doseLog.scheduled_at },
+      });
     }
   }
 

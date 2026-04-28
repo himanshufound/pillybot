@@ -18,6 +18,7 @@ const PRESCRIPTION_TEMP_BUCKET = "prescription-temp";
 const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-3-5-sonnet-latest";
 const RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
 const RATE_LIMIT_MAX_REQUESTS = 8;
+const FUNCTION_NAME = "parse-prescription";
 
 function jsonResponse(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
@@ -32,6 +33,28 @@ function errorResponse(status: number, code: string, message: string) {
   return jsonResponse(status, {
     error: { code, message },
   });
+}
+
+async function insertFunctionEvent(
+  adminClient: ReturnType<typeof createClient>,
+  payload: {
+    eventType: string;
+    status: "success" | "warning" | "failure";
+    userId?: string | null;
+    details?: Record<string, unknown>;
+  },
+) {
+  const { error } = await adminClient.from("edge_function_events").insert({
+    function_name: FUNCTION_NAME,
+    event_type: payload.eventType,
+    status: payload.status,
+    user_id: payload.userId ?? null,
+    details: payload.details ?? {},
+  });
+
+  if (error) {
+    console.error("Failed to write edge function event", error);
+  }
 }
 
 function getBearerToken(request: Request): string | null {
@@ -258,16 +281,31 @@ Deno.serve(async (request) => {
 
   const { data: isAllowed, error: rateLimitError } = await adminClient.rpc("enforce_edge_rate_limit", {
     p_user_id: user.id,
-    p_function_name: "parse-prescription",
+    p_function_name: FUNCTION_NAME,
     p_limit: RATE_LIMIT_MAX_REQUESTS,
     p_window_seconds: RATE_LIMIT_WINDOW_SECONDS,
   });
 
   if (rateLimitError) {
+    await insertFunctionEvent(adminClient, {
+      eventType: "rate_limit_error",
+      status: "failure",
+      userId: user.id,
+      details: { message: rateLimitError.message },
+    });
     return errorResponse(500, "rate_limit_failed", "Failed to validate request rate limit");
   }
 
   if (isAllowed !== true) {
+    await insertFunctionEvent(adminClient, {
+      eventType: "rate_limit_hit",
+      status: "warning",
+      userId: user.id,
+      details: {
+        limit: RATE_LIMIT_MAX_REQUESTS,
+        window_seconds: RATE_LIMIT_WINDOW_SECONDS,
+      },
+    });
     return errorResponse(429, "rate_limited", "Too many parse requests. Please try again shortly.");
   }
 
@@ -285,6 +323,12 @@ Deno.serve(async (request) => {
     });
 
   if (listError) {
+    await insertFunctionEvent(adminClient, {
+      eventType: "parse_failure",
+      status: "failure",
+      userId: user.id,
+      details: { code: "storage_metadata_failed", message: listError.message },
+    });
     return errorResponse(500, "storage_metadata_failed", "Failed to inspect image metadata");
   }
 
@@ -307,6 +351,12 @@ Deno.serve(async (request) => {
     .download(normalizedImagePath);
 
   if (downloadError || !imageBlob) {
+    await insertFunctionEvent(adminClient, {
+      eventType: "parse_failure",
+      status: "failure",
+      userId: user.id,
+      details: { code: "image_not_found", message: downloadError?.message ?? "Image blob was empty" },
+    });
     return errorResponse(404, "image_not_found", "Image not found");
   }
 
@@ -371,6 +421,12 @@ Deno.serve(async (request) => {
       body: JSON.stringify(anthropicPayload),
     });
   } catch {
+    await insertFunctionEvent(adminClient, {
+      eventType: "parse_failure",
+      status: "failure",
+      userId: user.id,
+      details: { code: "upstream_unavailable" },
+    });
     return errorResponse(502, "upstream_unavailable", "Failed to reach Anthropic API");
   }
 
@@ -382,6 +438,12 @@ Deno.serve(async (request) => {
   }
 
   if (!anthropicApiResponse.ok) {
+    await insertFunctionEvent(adminClient, {
+      eventType: "parse_failure",
+      status: "failure",
+      userId: user.id,
+      details: { code: "upstream_request_failed", response: anthropicResponseJson },
+    });
     return errorResponse(502, "upstream_request_failed", "Anthropic request failed");
   }
 
@@ -394,6 +456,12 @@ Deno.serve(async (request) => {
   try {
     parsedPrescription = parseModelResponse(completionText);
   } catch {
+    await insertFunctionEvent(adminClient, {
+      eventType: "parse_failure",
+      status: "failure",
+      userId: user.id,
+      details: { code: "upstream_invalid_payload" },
+    });
     return errorResponse(502, "upstream_invalid_payload", "Failed to validate model parsing JSON");
   }
 

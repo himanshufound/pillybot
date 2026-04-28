@@ -4,6 +4,7 @@ import { Card } from "../components/Card";
 import { Loader } from "../components/Loader";
 import { Notice } from "../components/Notice";
 import { useAuth } from "../lib/auth";
+import { getFunctionErrorMessage, isLowConfidenceParseResult } from "../lib/edgeFunctionClient";
 import { supabase } from "../lib/supabase";
 
 type ParsedPrescriptionResult = {
@@ -108,10 +109,23 @@ export default function ParsePrescriptionPage() {
         throw functionError;
       }
 
-      setResult((data ?? null) as ParsedPrescriptionResult | null);
-      setMessage("Prescription parsed successfully.");
-    } catch {
-      setError("We could not parse that prescription image. Please try again.");
+      const parsed = (data ?? null) as ParsedPrescriptionResult | null;
+      setResult(parsed);
+      setMessage(
+        parsed && isLowConfidenceParseResult(parsed)
+          ? "Prescription parsed with low confidence. Review every field before using it."
+          : "Prescription parsed successfully.",
+      );
+    } catch (parseError) {
+      const responseData = parseError && typeof parseError === "object" && "context" in parseError
+        ? (parseError as { context?: { json?: unknown } }).context?.json
+        : null;
+      setError(
+        getFunctionErrorMessage(
+          responseData,
+          "We could not parse that prescription image. Please try again.",
+        ),
+      );
     } finally {
       setLoading(false);
     }
@@ -172,6 +186,9 @@ export default function ParsePrescriptionPage() {
         </Card>
 
         {loading ? <Loader label="Reading prescription securely" /> : null}
+        {result && isLowConfidenceParseResult(result) ? (
+          <Notice type="info">Confidence is low. Double-check medication name, dosage, and timing before saving anything.</Notice>
+        ) : null}
 
         {result ? (
           <Card className="grid gap-4">

@@ -4,6 +4,7 @@ import { LinkButton } from "../components/Button";
 import { Loader } from "../components/Loader";
 import { Notice } from "../components/Notice";
 import { useAuth } from "../lib/auth";
+import { mapDoseLogRow, summarizeDoseLogs } from "../lib/dashboard.utils";
 import { supabase } from "../lib/supabase";
 import type { DoseLog } from "../types";
 
@@ -60,19 +61,8 @@ export default function DashboardPage() {
         if (todayResult.error) throw todayResult.error;
         if (streakResult.error) throw streakResult.error;
 
-        setDoseLogs((todayResult.data ?? []).map((row) => {
-          const medication = Array.isArray(row.medications) ? row.medications[0] : row.medications;
-          return {
-            id: row.id,
-            user_id: row.user_id,
-            medication_id: row.medication_id,
-            scheduled_at: row.scheduled_at,
-            taken_at: row.taken_at,
-            status: row.status as DoseLog["status"],
-            notes: row.notes,
-            medications: medication ?? null,
-          };
-        }));
+        setDoseLogs((todayResult.data ?? []).map((row) => mapDoseLogRow(row as unknown as DoseLog)));
+
         const cleanDays = new Set<string>();
         for (const row of streakResult.data ?? []) {
           if (row.status === "taken") {
@@ -90,9 +80,7 @@ export default function DashboardPage() {
     loadDashboard();
   }, [user]);
 
-  const upcoming = doseLogs.filter((dose) => dose.status === "scheduled");
-  const completed = doseLogs.filter((dose) => dose.status === "taken");
-  const missed = doseLogs.filter((dose) => dose.status === "missed");
+  const { upcoming, completed, missed } = summarizeDoseLogs(doseLogs);
 
   return (
     <div className="page-motion grid gap-6">

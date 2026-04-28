@@ -10,13 +10,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
-echo "Building frontend (npm run build)..."
-# Install is optional if node_modules already present
-if [ ! -d "node_modules" ]; then
-  echo "node_modules not found; running npm ci (this may take a while)"
-  npm ci --no-audit --no-fund
-fi
-npm run build
+bash scripts/build-release.sh
 
 echo "\nBuild complete. dist/ refreshed.\n"
 
@@ -38,13 +32,11 @@ Recommended manual steps (replace placeholders):
 #   - 004_schema_alignment
 #   - 005_profile_email_sync
 #   - 006_edge_rate_limit
+#   - 007_caregiver_expiry_and_edge_events
 # The project already includes a remote site bucket migration.
 
 # MANUAL REQUIRED: Deploy Edge Functions:
-#   supabase functions deploy verify-pill --project-ref $SUPABASE_PROJECT_REF --use-api
-#   supabase functions deploy parse-prescription --project-ref $SUPABASE_PROJECT_REF --use-api
-#   supabase functions deploy send-reminder --project-ref $SUPABASE_PROJECT_REF --use-api --no-verify-jwt
-#   supabase functions deploy static-site --project-ref $SUPABASE_PROJECT_REF --use-api --no-verify-jwt
+#   SUPABASE_PROJECT_REF=your-ref bash scripts/deploy-functions.sh
 
 # MANUAL REQUIRED: Upload static web assets if you are serving from the public site bucket:
 #   supabase storage cp -r dist/. ss:///site
@@ -56,9 +48,9 @@ Recommended manual steps (replace placeholders):
 #   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_VAPID_PUBLIC_KEY
 #
 # MANUAL REQUIRED: Verify:
-#   - Visit the project URL and the deployed static-site function
+#   STATIC_SITE_URL=https://... APP_BASE_URL=https://... SUPABASE_FUNCTIONS_BASE_URL=https://... CRON_SECRET=... bash scripts/post-deploy-smoke.sh
 #   - Check Edge Function logs in Supabase dashboard
-#   - Run smoke requests against endpoints
+#   - Review RELEASE_CHECKLIST.md
 
 EOF
   exit 0
@@ -72,4 +64,5 @@ if [ "$CONFIRM" != "y" ]; then
 fi
 
 echo "Applying migrations and deploying functions is best done with the Supabase MCP tools for this project."
-echo "If you want the CLI workflow instead, link the project first and then run the commands from the script header."
+echo "If you want the CLI workflow instead, link the project first and then run:"
+echo "  SUPABASE_PROJECT_REF=$SUPABASE_PROJECT_REF bash scripts/deploy-functions.sh"

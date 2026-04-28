@@ -4,6 +4,7 @@ import { Card } from "../components/Card";
 import { Loader } from "../components/Loader";
 import { Notice } from "../components/Notice";
 import { useAuth } from "../lib/auth";
+import { getFunctionErrorMessage, isLowConfidenceVerificationResult } from "../lib/edgeFunctionClient";
 import { supabase } from "../lib/supabase";
 import type { DoseLog, Medication, VerificationResult } from "../types";
 
@@ -131,6 +132,9 @@ export default function VerifyPage() {
 
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       const blob = await canvasToBlob(canvas);
+      if (blob.size > 5 * 1024 * 1024) {
+        throw new Error("Captured image exceeds the 5MB upload limit. Move closer and try again.");
+      }
       const imagePath = `users/${user.id}/pills/${Date.now()}.jpg`;
 
       const { error: uploadError } = await supabase.storage
@@ -153,8 +157,15 @@ export default function VerifyPage() {
 
       if (functionError) throw functionError;
       setResult(data.verificationResult as VerificationResult);
-    } catch {
-      setError("Verification failed. Please retake the image and try again.");
+    } catch (verifyError) {
+      const responseData = verifyError && typeof verifyError === "object" && "context" in verifyError
+        ? (verifyError as { context?: { json?: unknown } }).context?.json
+        : null;
+      setError(
+        verifyError instanceof Error && verifyError.message.includes("5MB")
+          ? verifyError.message
+          : getFunctionErrorMessage(responseData, "Verification failed. Please retake the image and try again."),
+      );
     } finally {
       setLoading(false);
     }
@@ -204,6 +215,9 @@ export default function VerifyPage() {
           <video className="aspect-[4/3] w-full object-cover" muted playsInline ref={videoRef} />
         </div>
         {loading ? <Loader label="Checking pill image securely" /> : null}
+        {result && isLowConfidenceVerificationResult(result) ? (
+          <Notice type="info">Confidence is low. Review the pill manually before marking it as taken.</Notice>
+        ) : null}
         {result ? (
           <Card>
             <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Result</p>
@@ -211,6 +225,7 @@ export default function VerifyPage() {
               {result.verified ? "Verified" : "Needs review"}
             </h2>
             <p className="mt-2 text-slate-600">{result.message}</p>
+            {!result.verified ? <p className="mt-2 text-sm font-semibold text-amber-700">Use this as guidance only and confirm the pill visually.</p> : null}
             <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
               <div className="h-full rounded-full bg-teal-500" style={{ width: `${Math.round(result.confidence * 100)}%` }} />
             </div>

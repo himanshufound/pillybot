@@ -54,10 +54,15 @@ export async function signInWithPassword(email: string, password: string) {
 
 export async function signInWithMagicLink(email: string) {
   ensureSupabaseConfigured();
+  // The app uses HashRouter, so the post-auth landing route lives after
+  // the URL fragment. Supabase will append session tokens to whatever we
+  // give here; pointing at /#/ keeps the tokens inside the fragment so
+  // they don't leak into server logs and `detectSessionInUrl` still picks
+  // them up.
   return supabase.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: `${window.location.origin}/`,
+      emailRedirectTo: `${window.location.origin}/#/`,
     },
   });
 }

@@ -103,18 +103,54 @@ async function proxyFromBucket(baseUrl: string, pathname: string, request: Reque
   });
 }
 
-function toBucketPath(pathname: string): string {
-  for (const prefix of FUNCTION_PREFIXES) {
-    if (pathname === prefix || pathname === `${prefix}/`) {
-      return "/index.html";
-    }
+function decodePathSafely(rawPath: string): string | null {
+  let decoded = rawPath;
 
-    if (pathname.startsWith(`${prefix}/`)) {
-      return pathname.slice(prefix.length);
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) return decoded;
+      decoded = next;
+    } catch {
+      return null;
     }
   }
 
-  return pathname === "/" ? "/index.html" : pathname;
+  return decoded;
+}
+
+function normalizeBucketPath(pathname: string): string | null {
+  const decoded = decodePathSafely(pathname);
+  if (decoded === null) return null;
+
+  if (decoded.includes("\0") || decoded.includes("\\")) return null;
+  if (!decoded.startsWith("/")) return null;
+
+  const collapsed = decoded.replace(/\/+/g, "/");
+  const segments = collapsed.split("/").slice(1);
+
+  for (const segment of segments) {
+    if (segment === "." || segment === "..") return null;
+  }
+
+  return "/" + segments.join("/");
+}
+
+function toBucketPath(pathname: string): string | null {
+  const safe = normalizeBucketPath(pathname);
+  if (safe === null) return null;
+
+  for (const prefix of FUNCTION_PREFIXES) {
+    if (safe === prefix || safe === `${prefix}/`) {
+      return "/index.html";
+    }
+
+    if (safe.startsWith(`${prefix}/`)) {
+      return safe.slice(prefix.length) || "/index.html";
+    }
+  }
+
+  return safe === "/" ? "/index.html" : safe;
 }
 
 Deno.serve(async (request) => {
@@ -129,6 +165,9 @@ Deno.serve(async (request) => {
 
   const url = new URL(request.url);
   const pathname = toBucketPath(url.pathname);
+  if (pathname === null) {
+    return jsonResponse(400, "invalid_path", "Request path is not allowed");
+  }
   const upstream = await proxyFromBucket(baseUrl, pathname, request);
 
   if (request.method === "HEAD") {

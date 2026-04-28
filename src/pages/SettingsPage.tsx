@@ -5,7 +5,7 @@ import { Input } from "../components/Input";
 import { Loader } from "../components/Loader";
 import { Notice } from "../components/Notice";
 import { useAuth } from "../lib/auth";
-import { subscribePush, unsubscribePush } from "../lib/pushNotifications";
+import { getPushPermissionState, sendTestNotification, subscribePush, unsubscribePush } from "../lib/pushNotifications";
 import { supabase } from "../lib/supabase";
 import type { Profile } from "../types";
 
@@ -14,6 +14,7 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [fullName, setFullName] = useState("");
   const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushPermission, setPushPermission] = useState(() => getPushPermissionState());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -48,6 +49,7 @@ export default function SettingsPage() {
         setProfile(nextProfile);
         setFullName(nextProfile?.full_name ?? "");
         setPushEnabled((subscriptionResult.data ?? []).length > 0);
+        setPushPermission(getPushPermissionState());
       } catch {
         setError("We could not load settings.");
       } finally {
@@ -95,8 +97,42 @@ export default function SettingsPage() {
         setPushEnabled(true);
         setMessage("Notifications enabled.");
       }
+      setPushPermission(getPushPermissionState());
     } catch (pushError) {
       setError(pushError instanceof Error ? pushError.message : "We could not update notification settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function refreshPushSubscription() {
+    if (!user) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await subscribePush(user.id, { forceRefresh: true });
+      setPushEnabled(true);
+      setPushPermission(getPushPermissionState());
+      setMessage("Notification subscription refreshed.");
+    } catch (pushError) {
+      setError(pushError instanceof Error ? pushError.message : "We could not refresh this browser subscription.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTestNotification() {
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await sendTestNotification();
+      setMessage("Test notification sent to this browser.");
+    } catch (pushError) {
+      setError(pushError instanceof Error ? pushError.message : "We could not send a test notification.");
     } finally {
       setSaving(false);
     }
@@ -127,12 +163,23 @@ export default function SettingsPage() {
 
         <Card className="grid gap-4">
           <h2 className="text-2xl font-black text-slate-950">Push notifications</h2>
-          <p className="text-slate-600">
-            {pushEnabled ? "This browser is subscribed to reminders." : "Enable reminders on this browser."}
+          <p className="text-sm font-semibold text-slate-500">
+            Status: <span className="text-slate-950">{pushPermission.label}</span>
           </p>
-          <Button disabled={saving} onClick={togglePush} type="button" variant={pushEnabled ? "danger" : "primary"}>
+          <p className="text-slate-600">
+            {pushPermission.detail}
+          </p>
+          <Button disabled={saving || (!pushEnabled && !pushPermission.canRequest)} onClick={togglePush} type="button" variant={pushEnabled ? "danger" : "primary"}>
             {pushEnabled ? "Disable notifications" : "Enable notifications"}
           </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button disabled={saving || !pushEnabled} onClick={refreshPushSubscription} type="button" variant="secondary">
+              Re-register this browser
+            </Button>
+            <Button disabled={saving || !pushEnabled} onClick={handleTestNotification} type="button" variant="ghost">
+              Send test notification
+            </Button>
+          </div>
         </Card>
       </section>
     </div>

@@ -2,6 +2,7 @@ export type DoseStatus = "scheduled" | "taken" | "missed" | "skipped";
 
 export type Profile = {
   id: string;
+  email?: string | null;
   full_name: string | null;
   avatar_url: string | null;
   timezone: string;
@@ -48,6 +49,8 @@ export type CaregiverLink = {
   patient_id: string;
   status?: "pending" | "accepted" | "declined";
   created_at: string;
+  expires_at?: string | null;
+  responded_at?: string | null;
   patient?: Profile | null;
   caregiver?: Profile | null;
 };

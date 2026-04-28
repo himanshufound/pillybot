@@ -1,5 +1,10 @@
 import { supabase } from "./supabase";
-import { resolveServiceWorkerPath, urlBase64ToUint8Array } from "./pushNotifications.utils";
+import {
+  describeNotificationPermission,
+  getPushCapability,
+  resolveServiceWorkerPath,
+  urlBase64ToUint8Array,
+} from "./pushNotifications.utils";
 
 function serviceWorkerPath() {
   return resolveServiceWorkerPath(import.meta.env.BASE_URL as string | undefined, window.location.origin);
@@ -19,27 +24,21 @@ async function getRegistration() {
   return navigator.serviceWorker.register(swPath);
 }
 
-export async function subscribePush(userId: string) {
-  if (!("Notification" in window) || !("PushManager" in window)) {
-    throw new Error("Push notifications are not supported in this browser.");
-  }
-
-  const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-  if (!vapidPublicKey) {
-    throw new Error("Push notification public key is not configured.");
-  }
-
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") {
-    throw new Error("Notification permission was not granted.");
-  }
-
-  const registration = await getRegistration();
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+export function getPushPermissionState() {
+  const capability = getPushCapability({
+    hasNotification: "Notification" in window,
+    hasPushManager: "PushManager" in window,
+    hasServiceWorker: "serviceWorker" in navigator,
   });
 
+  if (capability === "unsupported") {
+    return describeNotificationPermission("unsupported");
+  }
+
+  return describeNotificationPermission(Notification.permission);
+}
+
+async function saveSubscription(userId: string, subscription: PushSubscription) {
   const json = subscription.toJSON();
   const endpoint = json.endpoint;
   const p256dh = json.keys?.p256dh;
@@ -64,7 +63,46 @@ export async function subscribePush(userId: string) {
   if (error) {
     throw error;
   }
+}
 
+export async function subscribePush(userId: string, options?: { forceRefresh?: boolean }) {
+  const capability = getPushCapability({
+    hasNotification: "Notification" in window,
+    hasPushManager: "PushManager" in window,
+    hasServiceWorker: "serviceWorker" in navigator,
+  });
+
+  if (capability === "unsupported") {
+    throw new Error("Push notifications are not supported in this browser.");
+  }
+
+  const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+  if (!vapidPublicKey) {
+    throw new Error("Push notification public key is not configured.");
+  }
+
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error("Notification permission was not granted.");
+  }
+
+  const registration = await getRegistration();
+  const existingSubscription = await registration.pushManager.getSubscription();
+  if (existingSubscription && !options?.forceRefresh) {
+    await saveSubscription(userId, existingSubscription);
+    return existingSubscription;
+  }
+
+  if (existingSubscription && options?.forceRefresh) {
+    await existingSubscription.unsubscribe();
+  }
+
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+  });
+
+  await saveSubscription(userId, subscription);
   return subscription;
 }
 
@@ -88,4 +126,22 @@ export async function unsubscribePush(userId: string) {
   if (error) {
     throw error;
   }
+}
+
+export async function sendTestNotification() {
+  if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+    throw new Error("Notifications are not supported in this browser.");
+  }
+
+  if (Notification.permission !== "granted") {
+    throw new Error("Enable notifications before sending a test alert.");
+  }
+
+  const registration = await getRegistration();
+  await registration.showNotification("Pillybot test reminder", {
+    body: "Notifications are working on this browser.",
+    icon: `${import.meta.env.BASE_URL}pwa-icon.svg`,
+    badge: `${import.meta.env.BASE_URL}pwa-icon.svg`,
+    data: { url: "/" },
+  });
 }

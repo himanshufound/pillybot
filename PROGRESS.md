@@ -33,3 +33,33 @@ Next: deploy remaining function parity updates if needed, then run a deeper advi
   - Service worker registration now respects `BASE_URL`, improving deploy-path compatibility.
 
 Next: restore Supabase MCP auth and deploy updated function versions (`verify-pill`, `parse-prescription`, `send-reminder`, `static-site`) so live responses match local hardening changes.
+
+## 2026-04-28T10:07:05.000Z — Loop 4
+- Added `007_caregiver_expiry_and_edge_events.sql`:
+  - caregiver requests now track `expires_at` and `responded_at`
+  - new `public.edge_function_events` table records reminder, parse, rate-limit, and verification events
+- Hardened frontend AI flows:
+  - low-confidence parse/verify responses now show cautionary UX
+  - verification capture enforces client-side 5MB limit
+  - structured Edge Function error messages now surface in the UI when available
+- Improved caregiver workflow:
+  - duplicate requests now refresh pending links instead of blindly failing
+  - expired requests are visible, cannot be accepted, and can be resent or removed
+  - patients and caregivers now see clearer request-state messaging
+- Improved notification UX:
+  - explicit permission-state messaging
+  - re-register current browser flow
+  - local test notification action in settings
+- Added test coverage for dashboard summaries, caregiver link state/actions, Edge Function error parsing, and push notification capability helpers.
+- Split release flow into:
+  - `scripts/build-release.sh`
+  - `scripts/deploy-functions.sh`
+  - `scripts/post-deploy-smoke.sh`
+  - `RELEASE_CHECKLIST.md`
+- Verified locally:
+  - `npm run build`
+  - `npm test`
+  - `bash scripts/build-release.sh`
+  - route shell returns `200` for `#/auth`, `#/`, `#/add`, `#/verify`, `#/parse`, `#/alerts`, `#/caregiver`, `#/settings` via local dev server
+
+Next: apply `007_caregiver_expiry_and_edge_events.sql`, install/auth Supabase CLI or restore MCP access, deploy the four Edge Functions, and run authenticated browser verification against a real Supabase-backed session.

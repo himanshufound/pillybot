@@ -39,13 +39,17 @@ export default function AlertsPage() {
   }, [user]);
 
   async function markRead(alertId: string) {
+    if (!user) {
+      setError("You need to be signed in to update alerts.");
+      return;
+    }
     setError("");
     try {
       const { error: updateError } = await supabase
         .from("alerts")
         .update({ read: true })
         .eq("id", alertId)
-        .eq("user_id", user?.id);
+        .eq("user_id", user.id);
 
       if (updateError) throw updateError;
       setAlerts((current) => current.map((alert) => alert.id === alertId ? { ...alert, read: true } : alert));

@@ -16,7 +16,13 @@ export function AppShell() {
   const navigate = useNavigate();
 
   async function handleSignOut() {
-    await signOut();
+    try {
+      await signOut();
+    } catch (error) {
+      // Surface to console; the navigation below still kicks the user
+      // out of the protected shell so the local session is unusable.
+      console.error("Sign out failed", error);
+    }
     navigate("/auth", { replace: true });
   }
 

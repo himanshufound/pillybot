@@ -18,3 +18,49 @@ export function resolveServiceWorkerPath(baseUrl: string | undefined, origin: st
 
   return new URL("sw.js", `${origin}${normalizedBase}`).pathname;
 }
+
+type PushCapabilityInput = {
+  hasNotification: boolean;
+  hasPushManager: boolean;
+  hasServiceWorker: boolean;
+};
+
+export function getPushCapability({ hasNotification, hasPushManager, hasServiceWorker }: PushCapabilityInput) {
+  if (!hasNotification || !hasPushManager || !hasServiceWorker) {
+    return "unsupported" as const;
+  }
+
+  return "ready" as const;
+}
+
+export function describeNotificationPermission(permission: NotificationPermission | "unsupported") {
+  if (permission === "granted") {
+    return {
+      label: "Enabled",
+      detail: "This browser can receive medication reminders.",
+      canRequest: false,
+    };
+  }
+
+  if (permission === "denied") {
+    return {
+      label: "Blocked",
+      detail: "Notifications were blocked in browser settings. Re-enable them there before retrying.",
+      canRequest: false,
+    };
+  }
+
+  if (permission === "unsupported") {
+    return {
+      label: "Unsupported",
+      detail: "This browser does not support push notifications.",
+      canRequest: false,
+    };
+  }
+
+  return {
+    label: "Permission needed",
+    detail: "Allow notifications in your browser to enable medication reminders.",
+    canRequest: true,
+  };
+}
