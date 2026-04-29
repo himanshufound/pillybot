@@ -92,7 +92,28 @@ Next: apply `007_caregiver_expiry_and_edge_events.sql`, install/auth Supabase CL
   - 19 unit tests passing (added `countTakenDays`, `computeAdherenceByPatient`).
 
 Manual follow-up still required:
-- Apply migrations 008 → 011 to production Supabase.
-- Set `app.send_reminder_url` and `app.cron_secret` on the production database.
+- Set `app.send_reminder_url` and `app.cron_secret` on the production database (after migration 010 is applied).
+- Apply migration `010_send_reminder_cron.sql` (skipped during automated apply because it requires the operator-set DB settings to function).
 - Rotate Vercel OIDC token (re-run `vercel login`); the value in `.env.local` should be considered exposed.
 - Verify in production: caregiver accept/decline/resend now actually persists, and `send-reminder` is invoked once per minute.
+
+## 2026-04-29T03:55:00.000Z — Loop 6 (autopilot DB hardening)
+Applied via Supabase MCP:
+- 007_caregiver_expiry_and_edge_events
+- 008_caregiver_links_update_policy
+- 009_find_profile_by_email
+- 011_dose_logs_index_and_rate_limit_gc
+- 012_definer_function_grants_and_server_table_policies
+  - revoked PostgREST grants on `edge_function_events` and `edge_rate_limits`; added explicit deny-all RLS policies
+  - revoked anon EXECUTE on every SECURITY DEFINER function; revoked authenticated EXECUTE on trigger-only helpers (`handle_new_user`, `sync_profile_email_from_auth`, `cleanup_expired_prescription_temp`, `gc_edge_rate_limits`)
+- 013_lock_down_enforce_edge_rate_limit
+  - revoked authenticated EXECUTE; service-role-only path
+- 014_rls_initplan_and_fk_indexes
+  - rewrote every `auth.uid()` reference in RLS policies as `(select auth.uid())` so PostgreSQL caches it as an init-plan instead of re-evaluating per row
+  - collapsed two permissive UPDATE policies on `caregiver_links` into one
+  - added covering indexes for unindexed FKs (`dose_logs.medication_id`, `medications.user_id`, `edge_function_events.dose_log_id`, `edge_function_events.medication_id`)
+
+Supabase advisors after this loop:
+- Security: 1 WARN remaining — `find_profile_id_by_email` callable by `authenticated`. Intentional; the RPC exists precisely so caregivers can resolve patient ids by email.
+- Performance: only "unused_index" INFOs remain (expected — no traffic yet).
+- npm audit: 0 vulnerabilities (vitest bumped to v3 to clear the chain).
