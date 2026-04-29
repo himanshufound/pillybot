@@ -117,3 +117,7 @@ Supabase advisors after this loop:
 - Security: 1 WARN remaining — `find_profile_id_by_email` callable by `authenticated`. Intentional; the RPC exists precisely so caregivers can resolve patient ids by email.
 - Performance: only "unused_index" INFOs remain (expected — no traffic yet).
 - npm audit: 0 vulnerabilities (vitest bumped to v3 to clear the chain).
+
+Edge Functions:
+- `static-site` v5 redeployed via MCP — now rejects path traversal attempts and returns `400 invalid_path` for `..`, `\\`, `\0`, percent-encoded variants, etc. Smoke checks: `/` -> 200, `/sw.js` -> 200, `/../etc/passwd` -> 404 (rejected).
+- `verify-pill`, `parse-prescription`, `send-reminder`: source updated locally for `edge_function_events` audit logging; these still need a redeploy. The currently-deployed versions remain functional but skip the new event-table inserts.
