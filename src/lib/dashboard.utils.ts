@@ -52,3 +52,40 @@ export function summarizeDoseLogs(doseLogs: DoseLog[]) {
     streak: cleanDays.size,
   };
 }
+
+type StreakRow = { scheduled_at: string; status: string };
+
+export function countTakenDays(rows: StreakRow[]) {
+  const cleanDays = new Set<string>();
+  for (const row of rows) {
+    if (row.status === "taken") {
+      cleanDays.add(new Date(row.scheduled_at).toDateString());
+    }
+  }
+  return cleanDays.size;
+}
+
+type AdherenceRow = { user_id: string; status: string };
+
+export function computeAdherenceByPatient(
+  rows: AdherenceRow[],
+  patientIds: string[],
+) {
+  const totals = new Map<string, { taken: number; total: number }>();
+  for (const row of rows) {
+    const acc = totals.get(row.user_id) ?? { taken: 0, total: 0 };
+    acc.total += 1;
+    if (row.status === "taken") acc.taken += 1;
+    totals.set(row.user_id, acc);
+  }
+
+  const adherence = new Map<string, number>();
+  for (const patientId of patientIds) {
+    const acc = totals.get(patientId);
+    adherence.set(
+      patientId,
+      acc && acc.total > 0 ? Math.round((acc.taken / acc.total) * 100) : 0,
+    );
+  }
+  return adherence;
+}

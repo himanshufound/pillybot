@@ -63,3 +63,36 @@ Next: restore Supabase MCP auth and deploy updated function versions (`verify-pi
   - route shell returns `200` for `#/auth`, `#/`, `#/add`, `#/verify`, `#/parse`, `#/alerts`, `#/caregiver`, `#/settings` via local dev server
 
 Next: apply `007_caregiver_expiry_and_edge_events.sql`, install/auth Supabase CLI or restore MCP access, deploy the four Edge Functions, and run authenticated browser verification against a real Supabase-backed session.
+
+## 2026-04-28T15:55:00.000Z — Loop 5 (audit fixes, autopilot)
+- Critical:
+  - `008_caregiver_links_update_policy.sql`: added missing UPDATE RLS policies. Without these, accept/decline/resend silently affected zero rows.
+  - `009_find_profile_by_email.sql`: `security definer` RPC so caregivers can resolve a patient by email despite restrictive `profiles` RLS, with built-in per-user rate limiting via `enforce_edge_rate_limit`.
+  - `010_send_reminder_cron.sql`: pg_cron + pg_net schedule for `send-reminder` (operator must set `app.send_reminder_url` and `app.cron_secret` after applying).
+  - `011_dose_logs_index_and_rate_limit_gc.sql`: partial index on `dose_logs(status, scheduled_at)` for the reminder scan, and moved `edge_rate_limits` GC out of the hot path into a daily `pg_cron` job.
+  - `vercel.json`: full security header set (CSP, HSTS, X-Frame-Options, COOP/CORP, Permissions-Policy, Referrer-Policy) plus correct caching for `/assets/*` and `/sw.js`.
+- High:
+  - `static-site` Edge Function now normalizes paths and rejects traversal attempts (`..`, percent-encoded variants, backslashes, null bytes).
+  - `AlertsPage.markRead` no longer builds a query against `undefined`.
+  - `CaregiverPage`:
+    - resolves patient emails via the new RPC.
+    - replaces the per-patient adherence loop with a batched `IN (…)` query.
+    - every UPDATE/DELETE now uses `{ count: "exact" }` and surfaces a real error if RLS denies the write.
+  - `DashboardPage` streak no longer manufactures synthetic dose rows.
+  - Magic-link redirect targets the hash route so tokens stay in the URL fragment.
+- Tooling / hygiene:
+  - GitHub Actions CI added (`lint`, `typecheck`, `build`, `test`).
+  - ESLint v9 (flat config) + `react-hooks` + `react-refresh` + `typescript-eslint`. New `npm run lint` and `npm run typecheck` scripts.
+  - `engines.node >= 20` pinned in `package.json`.
+  - `public/manifest.webmanifest` + `<link rel="icon">` / `<link rel="manifest">` in `index.html`.
+  - `AppShell.handleSignOut` now tolerates network errors.
+  - `scripts/post-deploy-smoke.sh` no longer sends the literal `missing` string when `CRON_SECRET` is unset.
+  - README updated to reflect actual `vercel.json` and migration list.
+- Tests:
+  - 19 unit tests passing (added `countTakenDays`, `computeAdherenceByPatient`).
+
+Manual follow-up still required:
+- Apply migrations 008 → 011 to production Supabase.
+- Set `app.send_reminder_url` and `app.cron_secret` on the production database.
+- Rotate Vercel OIDC token (re-run `vercel login`); the value in `.env.local` should be considered exposed.
+- Verify in production: caregiver accept/decline/resend now actually persists, and `send-reminder` is invoked once per minute.

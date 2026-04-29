@@ -6,6 +6,7 @@ import { Loader } from "../components/Loader";
 import { Notice } from "../components/Notice";
 import { useAuth } from "../lib/auth";
 import { getCaregiverLinkState, getCaregiverManagementActions } from "../lib/caregiver.utils";
+import { computeAdherenceByPatient } from "../lib/dashboard.utils";
 import { supabase } from "../lib/supabase";
 import type { CaregiverLink, DoseLog, Profile } from "../types";
 
@@ -89,7 +90,7 @@ export default function CaregiverPage() {
         ),
       );
 
-      const adherenceByPatient = new Map<string, number>();
+      let adherenceByPatient = new Map<string, number>();
 
       if (acceptedPatientIds.length > 0) {
         const { data: doseRows, error: doseError } = await supabase
@@ -100,21 +101,10 @@ export default function CaregiverPage() {
 
         if (doseError) throw doseError;
 
-        const totals = new Map<string, { taken: number; total: number }>();
-        for (const row of (doseRows ?? []) as Pick<DoseLog, "user_id" | "status">[]) {
-          const acc = totals.get(row.user_id) ?? { taken: 0, total: 0 };
-          acc.total += 1;
-          if (row.status === "taken") acc.taken += 1;
-          totals.set(row.user_id, acc);
-        }
-
-        for (const patientId of acceptedPatientIds) {
-          const acc = totals.get(patientId);
-          adherenceByPatient.set(
-            patientId,
-            acc && acc.total > 0 ? Math.round((acc.taken / acc.total) * 100) : 0,
-          );
-        }
+        adherenceByPatient = computeAdherenceByPatient(
+          (doseRows ?? []) as Pick<DoseLog, "user_id" | "status">[],
+          acceptedPatientIds,
+        );
       }
 
       const summaries: PatientSummary[] = safeLinks.map((link) => {

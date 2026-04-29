@@ -4,7 +4,7 @@ import { LinkButton } from "../components/Button";
 import { Loader } from "../components/Loader";
 import { Notice } from "../components/Notice";
 import { useAuth } from "../lib/auth";
-import { mapDoseLogRow, summarizeDoseLogs } from "../lib/dashboard.utils";
+import { countTakenDays, mapDoseLogRow, summarizeDoseLogs } from "../lib/dashboard.utils";
 import { supabase } from "../lib/supabase";
 import type { DoseLog } from "../types";
 
@@ -62,14 +62,7 @@ export default function DashboardPage() {
         if (streakResult.error) throw streakResult.error;
 
         setDoseLogs((todayResult.data ?? []).map((row) => mapDoseLogRow(row as unknown as DoseLog)));
-
-        const cleanDays = new Set<string>();
-        for (const row of streakResult.data ?? []) {
-          if (row.status === "taken") {
-            cleanDays.add(new Date(row.scheduled_at).toDateString());
-          }
-        }
-        setStreak(cleanDays.size);
+        setStreak(countTakenDays(streakResult.data ?? []));
       } catch {
         setError("We could not load today’s dose schedule.");
       } finally {
