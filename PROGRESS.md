@@ -118,6 +118,23 @@ Supabase advisors after this loop:
 - Performance: only "unused_index" INFOs remain (expected — no traffic yet).
 - npm audit: 0 vulnerabilities (vitest bumped to v3 to clear the chain).
 
-Edge Functions:
-- `static-site` v5 redeployed via MCP — now rejects path traversal attempts and returns `400 invalid_path` for `..`, `\\`, `\0`, percent-encoded variants, etc. Smoke checks: `/` -> 200, `/sw.js` -> 200, `/../etc/passwd` -> 404 (rejected).
-- `verify-pill`, `parse-prescription`, `send-reminder`: source updated locally for `edge_function_events` audit logging; these still need a redeploy. The currently-deployed versions remain functional but skip the new event-table inserts.
+Edge Functions deployed via MCP:
+- `static-site` v5 — rejects path traversal attempts (`..`, `\\`, `\0`, percent-encoded variants) with `400 invalid_path`. Smoke: `/` -> 200, `/sw.js` -> 200, `/../etc/passwd` -> 404.
+- `parse-prescription` v2 — picks up `edge_function_events` audit logging, structured error envelope, rate-limit RPC integration. Smoke: no auth -> 401.
+- `verify-pill` v3 — same audit logging + structured errors + rate-limit RPC. Smoke: no auth -> 401.
+- `send-reminder` v4 — full audit logging on every reminder/escalation/error path. Smoke: no `x-cron-secret` -> 401.
+
+Migration 010 (`send_reminder` pg_cron schedule) and 015 (move `pg_net` to `extensions` schema) applied. All three cron jobs are active in `cron.job`:
+- `cleanup_prescription_temp` (*/5 * * * *)
+- `gc_edge_rate_limits` (7 3 * * *)
+- `send_reminder` (* * * * *)
+
+The `send_reminder` cron is a no-op until the operator runs:
+```sql
+alter database postgres set app.send_reminder_url = 'https://uzwjriqjoetgotozgimx.functions.supabase.co/send-reminder';
+alter database postgres set app.cron_secret       = '<same as edge CRON_SECRET>';
+```
+
+Final advisor pass:
+- Security: 1 WARN (intentional — `find_profile_id_by_email` exposed to authenticated by design).
+- Performance: only INFO `unused_index` (expected — no traffic yet).

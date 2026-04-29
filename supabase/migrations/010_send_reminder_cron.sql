@@ -13,6 +13,11 @@
 -- NULL with the second arg `true`). This is intentional — we don't want
 -- the cron secret committed to source control.
 
+-- Note: migration 015 moves pg_net into the `extensions` schema. When
+-- replaying migrations from scratch this file runs first and would put
+-- pg_net in `public`, but migration 015 corrects that. To future-proof,
+-- migration 015 also rewrites the cron job to call `extensions.http_post`.
+
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
