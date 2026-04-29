@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 import { AppShell } from "./components/AppShell";
 import { Loader } from "./components/Loader";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -15,28 +16,31 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 export default function App() {
   return (
-    <Suspense
-      fallback={
-        <div className="grid min-h-screen place-items-center bg-slate-50">
-          <Loader label="Loading Pillybot" />
-        </div>
-      }
-    >
-      <Routes>
-        <Route element={<AuthPage />} path="/auth" />
-        <Route element={<ProtectedRoute />}>
-          <Route element={<AppShell />}>
-            <Route element={<DashboardPage />} index />
-            <Route element={<AddMedicationPage />} path="/add" />
-            <Route element={<VerifyPage />} path="/verify" />
-            <Route element={<ParsePrescriptionPage />} path="/parse" />
-            <Route element={<AlertsPage />} path="/alerts" />
-            <Route element={<CaregiverPage />} path="/caregiver" />
-            <Route element={<SettingsPage />} path="/settings" />
+    <>
+      <Suspense
+        fallback={
+          <div className="grid min-h-screen place-items-center bg-slate-50">
+            <Loader label="Loading Pillybot" />
+          </div>
+        }
+      >
+        <Routes>
+          <Route element={<AuthPage />} path="/auth" />
+          <Route element={<ProtectedRoute />}>
+            <Route element={<AppShell />}>
+              <Route element={<DashboardPage />} index />
+              <Route element={<AddMedicationPage />} path="/add" />
+              <Route element={<VerifyPage />} path="/verify" />
+              <Route element={<ParsePrescriptionPage />} path="/parse" />
+              <Route element={<AlertsPage />} path="/alerts" />
+              <Route element={<CaregiverPage />} path="/caregiver" />
+              <Route element={<SettingsPage />} path="/settings" />
+            </Route>
           </Route>
-        </Route>
-        <Route element={<Navigate replace to="/" />} path="*" />
-      </Routes>
-    </Suspense>
+          <Route element={<Navigate replace to="/" />} path="*" />
+        </Routes>
+      </Suspense>
+      <SpeedInsights />
+    </>
   );
 }
