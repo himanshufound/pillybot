@@ -156,7 +156,13 @@ export default function VerifyPage() {
       });
 
       if (functionError) throw functionError;
-      setResult(data.verificationResult as VerificationResult);
+      const verificationResult = (data && typeof data === "object" && "verificationResult" in data)
+        ? (data as { verificationResult: VerificationResult }).verificationResult
+        : null;
+      if (!verificationResult) {
+        throw new Error("Verification failed. Please retake the image and try again.");
+      }
+      setResult(verificationResult);
     } catch (verifyError) {
       const responseData = verifyError && typeof verifyError === "object" && "context" in verifyError
         ? (verifyError as { context?: { json?: unknown } }).context?.json

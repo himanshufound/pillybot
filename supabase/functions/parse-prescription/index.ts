@@ -15,22 +15,67 @@ type ParsedPrescriptionResult = {
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const PRESCRIPTION_TEMP_BUCKET = "prescription-temp";
-const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-3-5-sonnet-latest";
+// SECURITY: review this — `claude-3-5-sonnet-latest` was retired by Anthropic on
+// October 28, 2025. Using a retired alias causes every parse request to fail
+// upstream with `model_not_found`. `claude-sonnet-4-6` is Anthropic's
+// recommended replacement for the 3.5 Sonnet line and supports vision input.
+const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-sonnet-4-6";
 const RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
 const RATE_LIMIT_MAX_REQUESTS = 8;
 const FUNCTION_NAME = "parse-prescription";
 
-function jsonResponse(status: number, body: Record<string, unknown>) {
+// SECURITY: review this — Edge Function CORS allowlist. The browser blocks the
+// preflight OPTIONS request unless the response carries Access-Control-Allow-*
+// headers, so without these the React app on pillybot.vercel.app cannot call
+// this function at all. We echo the request Origin only when it matches the
+// allowlist below; any other origin gets the canonical pillybot.vercel.app
+// host so we never advertise wildcard access.
+const ALLOWED_ORIGINS = new Set<string>([
+  "https://pillybot.vercel.app",
+  "http://localhost:5173",
+  "http://localhost:4173",
+]);
+const DEFAULT_ALLOWED_ORIGIN = "https://pillybot.vercel.app";
+
+function pickAllowedOrigin(request: Request): string {
+  const origin = request.headers.get("Origin");
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    return origin;
+  }
+  return DEFAULT_ALLOWED_ORIGIN;
+}
+
+function corsHeaders(request: Request): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": pickAllowedOrigin(request),
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+function buildJsonResponse(
+  request: Request,
+  status: number,
+  body: Record<string, unknown>,
+) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "Content-Type": "application/json",
+      ...corsHeaders(request),
     },
   });
 }
 
-function errorResponse(status: number, code: string, message: string) {
-  return jsonResponse(status, {
+function buildErrorResponse(
+  request: Request,
+  status: number,
+  code: string,
+  message: string,
+) {
+  return buildJsonResponse(request, status, {
     error: { code, message },
   });
 }
@@ -231,8 +276,20 @@ function parseModelResponse(text: string): ParsedPrescriptionResult {
 }
 
 Deno.serve(async (request) => {
+  // Bind the request once so every helper below carries the right CORS
+  // headers without each call site having to thread `request` through.
+  const jsonResponse = (status: number, body: Record<string, unknown>) =>
+    buildJsonResponse(request, status, body);
+  const errorResponse = (status: number, code: string, message: string) =>
+    buildErrorResponse(request, status, code, message);
+
   if (request.method === "OPTIONS") {
-    return jsonResponse(200, { ok: true });
+    // Browser preflight. 204 + empty body is the canonical answer; the
+    // CORS headers are added by buildJsonResponse via corsHeaders().
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request),
+    });
   }
 
   if (request.method !== "POST") {
@@ -438,11 +495,18 @@ Deno.serve(async (request) => {
   }
 
   if (!anthropicApiResponse.ok) {
+    const upstreamError = anthropicResponseJson?.error as Record<string, unknown> | undefined;
     await insertFunctionEvent(adminClient, {
       eventType: "parse_failure",
       status: "failure",
       userId: user.id,
-      details: { code: "upstream_request_failed", response: anthropicResponseJson },
+      details: {
+        code: "upstream_request_failed",
+        upstream_status: anthropicApiResponse.status,
+        upstream_error_type: typeof upstreamError?.type === "string" ? upstreamError.type : null,
+        model: ANTHROPIC_MODEL,
+        response: anthropicResponseJson,
+      },
     });
     return errorResponse(502, "upstream_request_failed", "Anthropic request failed");
   }

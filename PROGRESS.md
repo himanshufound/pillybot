@@ -138,3 +138,37 @@ alter database postgres set app.cron_secret       = '<same as edge CRON_SECRET>'
 Final advisor pass:
 - Security: 1 WARN (intentional — `find_profile_id_by_email` exposed to authenticated by design).
 - Performance: only INFO `unused_index` (expected — no traffic yet).
+
+## 2026-04-30T11:30:00.000Z — Loop 7 (Anthropic model deprecation, /parse fix)
+
+Owner reported `/parse` route broken in production. Root cause: the
+`parse-prescription` (and `verify-pill`) Edge Functions defaulted
+`ANTHROPIC_MODEL` to the alias `claude-3-5-sonnet-latest`, which Anthropic
+**retired on October 28, 2025**. Every parse request was hitting the
+upstream with a retired model id, so Anthropic returned a model-not-found
+error and the function surfaced `502 upstream_request_failed`. The
+Supabase Edge Function `ANTHROPIC_MODEL` secret was never set in
+production, so the retired default kicked in.
+
+Fixed:
+- `supabase/functions/parse-prescription/index.ts`: default model is now
+  `claude-sonnet-4-6` (Anthropic's recommended replacement for the 3.5
+  Sonnet line, supports vision input). Added `// SECURITY: review this`.
+- `supabase/functions/verify-pill/index.ts`: same default model swap.
+  `/verify` would have failed the same way the next time a user tried it.
+
+Verified:
+- `npm run typecheck` — clean.
+- `npm run build` — clean (`vite build`).
+- `npm test` — 19/19 passing.
+- `npm run lint` — same 8 pre-existing `react-hooks/*` warnings, 0 errors.
+
+Pending manual actions:
+1. Deploy the two updated Edge Functions:
+   `SUPABASE_PROJECT_REF=<ref> bash scripts/deploy-functions.sh`
+2. (Recommended) Pin the model explicitly in Supabase Edge secrets:
+   `ANTHROPIC_MODEL=claude-sonnet-4-6` so future default drift can't break
+   production again.
+3. Smoke test `/parse` in production: upload a prescription JPEG <= 5MB,
+   confirm a 200 response with structured fields instead of
+   `502 upstream_request_failed`.
